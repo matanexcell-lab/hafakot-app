@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>כניסה | ניהול הפקות</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+  <form class="login-card" method="post">
+    <div class="login-mark">ה.פ</div>
+    <h1>ניהול הפקות</h1>
+    <p class="login-sub">הזן סיסמה כדי להיכנס</p>
+    {% if error %}<p class="login-error">{{ error }}</p>{% endif %}
+    <input type="password" name="password" placeholder="סיסמה" autofocus required>
+    <button type="submit">כניסה</button>
+  </form>
+</body>
+</html>
