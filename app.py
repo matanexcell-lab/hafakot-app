@@ -21,6 +21,7 @@ SHEET_NAMES = {
 ID_COLUMN_INDEX = 1  # column B, zero-based
 
 # Header names used for smart behaviors (status auto-log, transfer flow, previews)
+H_CLIENT_NAME = "שם לקוח"
 H_COMPANY = "חברה"
 H_TRANSFER_COMPANY = "חברה מעבירה"
 H_PRODUCT = "סוג ההצעה / מוצר"
@@ -228,20 +229,32 @@ def index():
 def api_search():
     data = request.get_json(force=True)
     sheet_type = data.get("sheet_type")
-    tz = (data.get("tz") or "").strip()
+    search_by = data.get("search_by", "tz")
+    query = (data.get("query") or "").strip()
     mode = data.get("mode")
 
     if sheet_type not in SHEET_NAMES:
         return jsonify({"error": "סוג גיליון לא תקין"}), 400
-    if not tz:
-        return jsonify({"error": "יש להזין תעודת זהות"}), 400
+    if not query:
+        return jsonify({"error": "יש להזין ערך לחיפוש"}), 400
 
     try:
         headers, rows = fetch_sheet(sheet_type)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
 
-    matched = [r for r in rows if r["values"] and r["values"][ID_COLUMN_INDEX].strip() == tz]
+    if search_by == "company":
+        if H_COMPANY not in headers:
+            return jsonify({"error": f"לא נמצאה עמודה בשם '{H_COMPANY}'"}), 500
+        company_idx = headers.index(H_COMPANY)
+        q = query.lower()
+        matched = [
+            r for r in rows if r["values"] and q in r["values"][company_idx].lower()
+        ]
+    else:
+        matched = [
+            r for r in rows if r["values"] and r["values"][ID_COLUMN_INDEX].strip() == query
+        ]
 
     if mode == "update":
         matched = [r for r in matched if not r["is_green"]]
