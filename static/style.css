@@ -395,6 +395,16 @@ button, input {
   background: #EFECE4;
 }
 
+.modal-field select:focus {
+  outline: none;
+  border-color: var(--gold);
+  background: #fff;
+}
+
+.modal-field textarea {
+  resize: vertical;
+}
+
 .modal-footer {
   padding: 14px 18px;
   border-top: 1px solid var(--line);
