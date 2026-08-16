@@ -1,5 +1,6 @@
 (() => {
   const H_ID = "ת.ז";
+  const H_CLIENT_NAME = "שם לקוח";
   const H_COMPANY = "חברה";
   const H_TRANSFER_COMPANY = "חברה מעבירה";
   const H_PRODUCT = "סוג ההצעה / מוצר";
@@ -14,12 +15,15 @@
 
   const state = {
     sheetType: "pension",
+    searchBy: "tz",
     mode: null,
     headers: [],
     rows: [],
   };
 
   const tzInput = document.getElementById("tz-input");
+  const searchLabel = document.getElementById("search-label");
+  const searchByGroup = document.getElementById("search-by-group");
   const sheetTypeGroup = document.getElementById("sheet-type-group");
   const btnUpdate = document.getElementById("btn-update");
   const btnView = document.getElementById("btn-view");
@@ -61,6 +65,26 @@
     return (row.values[idx] || "").trim();
   }
 
+  searchByGroup.addEventListener("click", (e) => {
+    const btn = e.target.closest(".segment");
+    if (!btn) return;
+    [...searchByGroup.children].forEach((c) => c.classList.remove("active"));
+    btn.classList.add("active");
+    state.searchBy = btn.dataset.value;
+    if (state.searchBy === "company") {
+      searchLabel.textContent = "שם חברה";
+      tzInput.placeholder = "לדוגמה: הראל";
+      tzInput.inputMode = "text";
+      tzInput.removeAttribute("maxlength");
+    } else {
+      searchLabel.textContent = "תעודת זהות לקוח";
+      tzInput.placeholder = "לדוגמה: 123456789";
+      tzInput.inputMode = "numeric";
+      tzInput.maxLength = 9;
+    }
+    tzInput.value = "";
+  });
+
   sheetTypeGroup.addEventListener("click", (e) => {
     const btn = e.target.closest(".segment");
     if (!btn) return;
@@ -81,9 +105,9 @@
   }
 
   async function runSearch(mode) {
-    const tz = tzInput.value.trim();
-    if (!tz) {
-      showToast("יש להזין תעודת זהות", true);
+    const query = tzInput.value.trim();
+    if (!query) {
+      showToast(state.searchBy === "company" ? "יש להזין שם חברה" : "יש להזין תעודת זהות", true);
       tzInput.focus();
       return;
     }
@@ -93,7 +117,12 @@
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sheet_type: state.sheetType, tz, mode }),
+        body: JSON.stringify({
+          sheet_type: state.sheetType,
+          search_by: state.searchBy,
+          query,
+          mode,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -157,6 +186,7 @@
     const fields = document.createElement("div");
     fields.className = "row-fields";
 
+    const clientName = getVal(headers, row, H_CLIENT_NAME);
     const company = getVal(headers, row, H_COMPANY);
     const product = getVal(headers, row, H_PRODUCT);
     const transferCompany = getVal(headers, row, H_TRANSFER_COMPANY);
@@ -172,6 +202,7 @@
       fields.appendChild(v);
     };
 
+    if (state.searchBy === "company" && clientName) addField(H_CLIENT_NAME, clientName);
     if (company) addField(H_COMPANY, company);
     if (product) addField(H_PRODUCT, product);
     if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
