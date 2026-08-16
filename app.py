@@ -60,13 +60,32 @@ def is_green(color):
     return g > r + 0.04 and g > b + 0.04
 
 
+def resolve_sheet_title(sheet_type):
+    """Ask Google for the exact tab titles and match against our configured name.
+    This avoids mismatches from hidden characters or encoding differences."""
+    service = get_service()
+    target = SHEET_NAMES[sheet_type]
+    resp = (
+        service.spreadsheets()
+        .get(spreadsheetId=SPREADSHEET_ID, fields="sheets.properties(title)")
+        .execute()
+    )
+    titles = [s["properties"]["title"] for s in resp.get("sheets", [])]
+    for t in titles:
+        if t.strip() == target.strip():
+            return t
+    raise RuntimeError(
+        f"לא נמצא טאב בשם '{target}' בגיליון. הטאבים שנמצאו הם: {', '.join(titles)}"
+    )
+
+
 def fetch_sheet(sheet_type):
     """Returns (headers, rows) where rows is a list of dicts:
     {row_number, values: [...], is_green: bool}
     row_number is 1-indexed as it appears in the actual spreadsheet.
     """
     service = get_service()
-    sheet_name = SHEET_NAMES[sheet_type]
+    sheet_name = resolve_sheet_title(sheet_type)
     resp = (
         service.spreadsheets()
         .get(
@@ -116,7 +135,7 @@ def fetch_sheet(sheet_type):
 
 def update_row(sheet_type, row_number, values):
     service = get_service()
-    sheet_name = SHEET_NAMES[sheet_type]
+    sheet_name = resolve_sheet_title(sheet_type)
     last_col = col_letter(len(values))
     range_ = f"'{sheet_name}'!A{row_number}:{last_col}{row_number}"
     service.spreadsheets().values().update(
@@ -181,7 +200,10 @@ def api_search():
     if not tz:
         return jsonify({"error": "יש להזין תעודת זהות"}), 400
 
-    headers, rows = fetch_sheet(sheet_type)
+    try:
+        headers, rows = fetch_sheet(sheet_type)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
 
     matched = [r for r in rows if r["values"] and r["values"][ID_COLUMN_INDEX].strip() == tz]
 
@@ -204,7 +226,10 @@ def api_update():
     if not row_number or not isinstance(values, list):
         return jsonify({"error": "נתונים חסרים"}), 400
 
-    update_row(sheet_type, row_number, values)
+    try:
+        update_row(sheet_type, row_number, values)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
 
 
