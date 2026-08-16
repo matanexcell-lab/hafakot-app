@@ -272,7 +272,7 @@
     field.appendChild(editHint);
 
     const hint = document.createElement("label");
-    hint.textContent = "הוספת עדכון סטטוס חדש (יתווסף עם תאריך היום מעל ההיסטוריה)";
+    hint.textContent = "הוספת עדכון סטטוס חדש (יתווסף עם תאריך היום מתחת להיסטוריה)";
     hint.style.marginTop = "8px";
     field.appendChild(hint);
 
@@ -407,7 +407,7 @@
       const statusIdx = headers.indexOf(H_STATUS);
       if (statusIdx !== -1) {
         const existing = values[statusIdx] || "";
-        values[statusIdx] = pendingStatusLines.join("\n") + (existing.trim() ? "\n" + existing : "");
+        values[statusIdx] = (existing.trim() ? existing + "\n" : "") + pendingStatusLines.join("\n");
       }
     }
 
