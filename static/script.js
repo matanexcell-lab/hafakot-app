@@ -169,7 +169,7 @@
     state.headers.forEach((header, i) => {
       const field = document.createElement("div");
       field.className = "modal-field";
-      const locked = i === 0; // ID column
+      const locked = i === 1; // ID column (B)
       if (locked) field.classList.add("locked");
       const label = document.createElement("label");
       label.textContent = header || `עמודה ${i + 1}`;
