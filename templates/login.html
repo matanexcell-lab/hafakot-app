@@ -3,84 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ניהול הפקות לקוחות</title>
+<title>כניסה | ניהול הפקות</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div class="brand">
-        <span class="brand-mark">ה.פ</span>
-        <span class="brand-name">ניהול הפקות</span>
-      </div>
-      <a class="logout-link" href="{{ url_for('logout') }}">התנתקות</a>
-    </div>
-  </header>
-
-  <main class="wrap">
-
-    <section class="panel search-panel">
-      <div class="segment-group" id="search-by-group">
-        <button type="button" class="segment active" data-value="tz">חיפוש לפי ת.ז</button>
-        <button type="button" class="segment" data-value="company">חיפוש לפי חברה</button>
-      </div>
-
-      <label class="field-label" for="tz-input" id="search-label" style="margin-top: 14px;">תעודת זהות לקוח</label>
-      <input id="tz-input" class="tz-input" type="text" inputmode="numeric" placeholder="לדוגמה: 123456789" maxlength="9">
-
-      <div class="segment-group" id="sheet-type-group">
-        <button type="button" class="segment active" data-value="pension">פנסיוני</button>
-        <button type="button" class="segment" data-value="detail">פרט</button>
-      </div>
-
-      <div class="action-group">
-        <button type="button" class="action-btn primary" id="btn-update">
-          <span class="action-title">עדכון שינויים</span>
-          <span class="action-sub">שורות שטרם דווחו</span>
-        </button>
-        <button type="button" class="action-btn" id="btn-view">
-          <span class="action-title">הצגת כל השורות</span>
-          <span class="action-sub">תצוגה מלאה, כולל דווחו</span>
-        </button>
-      </div>
-    </section>
-
-    <section class="panel results-panel" id="results-panel" hidden>
-      <div class="results-header">
-        <h2 id="results-title"></h2>
-        <span class="results-count" id="results-count"></span>
-      </div>
-      <div id="results-list" class="results-list"></div>
-    </section>
-
-    <div class="empty-state" id="empty-state" hidden>
-      <p id="empty-text">הזן תעודת זהות ובחר פעולה</p>
-    </div>
-
-    <div class="loading" id="loading" hidden>
-      <div class="spinner"></div>
-      <span>טוען נתונים מהגיליון…</span>
-    </div>
-
-  </main>
-
-  <div class="modal-backdrop" id="edit-backdrop" hidden>
-    <div class="modal" id="edit-modal">
-      <div class="modal-header">
-        <h3>עריכת שורה</h3>
-        <button type="button" class="modal-close" id="modal-close">✕</button>
-      </div>
-      <div class="modal-body" id="modal-body"></div>
-      <div class="modal-footer">
-        <button type="button" class="action-btn primary" id="save-row">שמירת שינויים</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="toast" id="toast" hidden></div>
-
-  <script src="{{ url_for('static', filename='script.js') }}"></script>
+<body class="login-body">
+  <form class="login-card" method="post">
+    <div class="login-mark">ה.פ</div>
+    <h1>ניהול הפקות</h1>
+    <p class="login-sub">הזן סיסמה כדי להיכנס</p>
+    {% if error %}<p class="login-error">{{ error }}</p>{% endif %}
+    <input type="password" name="password" placeholder="סיסמה" autofocus required>
+    <button type="submit">כניסה</button>
+  </form>
 </body>
 </html>
