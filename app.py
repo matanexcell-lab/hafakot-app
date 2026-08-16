@@ -71,7 +71,7 @@ def fetch_sheet(sheet_type):
         service.spreadsheets()
         .get(
             spreadsheetId=SPREADSHEET_ID,
-            ranges=[sheet_name],
+            ranges=[f"'{sheet_name}'"],
             includeGridData=True,
             fields="sheets(data(rowData(values(formattedValue,effectiveFormat.backgroundColor))))",
         )
@@ -118,7 +118,7 @@ def update_row(sheet_type, row_number, values):
     service = get_service()
     sheet_name = SHEET_NAMES[sheet_type]
     last_col = col_letter(len(values))
-    range_ = f"{sheet_name}!A{row_number}:{last_col}{row_number}"
+    range_ = f"'{sheet_name}'!A{row_number}:{last_col}{row_number}"
     service.spreadsheets().values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=range_,
