@@ -1,4 +1,17 @@
 (() => {
+  const H_ID = "ת.ז";
+  const H_COMPANY = "חברה";
+  const H_TRANSFER_COMPANY = "חברה מעבירה";
+  const H_PRODUCT = "סוג ההצעה / מוצר";
+  const H_STATUS = "סטטוס הפקה";
+  const H_TRANSFER_ACTUAL = "ניוד בפועל";
+
+  const TRANSFER_REASON_LABELS = {
+    daily: "ניוד בוצע לפי דוח יומי",
+    site: "ניוד בוצע לפי אתר",
+    site_confirm: "ניוד בוצע לפי אתר אישור בבפי",
+  };
+
   const state = {
     sheetType: "pension",
     mode: null,
@@ -19,12 +32,14 @@
   const loading = document.getElementById("loading");
   const modalBackdrop = document.getElementById("edit-backdrop");
   const modalBody = document.getElementById("modal-body");
+  const modalFooter = document.querySelector(".modal-footer");
   const modalClose = document.getElementById("modal-close");
   const saveRowBtn = document.getElementById("save-row");
   const toast = document.getElementById("toast");
 
   let toastTimer = null;
-  let activeEditRow = null; // { row_number, values } while modal open in edit mode
+  let activeRow = null; // the row currently open in the modal
+  let markGreenBtn = null;
 
   function showToast(msg, isError) {
     toast.textContent = msg;
@@ -32,6 +47,18 @@
     toast.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toast.hidden = true; }, 3200);
+  }
+
+  function todayStr() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+  }
+
+  function getVal(headers, row, headerName) {
+    const idx = headers.indexOf(headerName);
+    if (idx === -1) return "";
+    return (row.values[idx] || "").trim();
   }
 
   sheetTypeGroup.addEventListener("click", (e) => {
@@ -104,11 +131,11 @@
 
     resultsList.innerHTML = "";
     rows.forEach((row) => {
-      resultsList.appendChild(renderRowCard(row, headers, mode));
+      resultsList.appendChild(renderRowCard(row, headers));
     });
   }
 
-  function renderRowCard(row, headers, mode) {
+  function renderRowCard(row, headers) {
     const card = document.createElement("div");
     card.className = "row-card" + (row.is_green ? " is-green" : "");
 
@@ -129,21 +156,26 @@
 
     const fields = document.createElement("div");
     fields.className = "row-fields";
-    // preview the first few non-empty fields
-    let shown = 0;
-    for (let i = 0; i < headers.length && shown < 4; i++) {
-      const val = row.values[i];
-      if (!val) continue;
-      const label = document.createElement("span");
-      label.className = "row-field-label";
-      label.textContent = headers[i] || `עמודה ${i + 1}`;
-      const value = document.createElement("span");
-      value.className = "row-field-value";
-      value.textContent = val;
-      fields.appendChild(label);
-      fields.appendChild(value);
-      shown++;
-    }
+
+    const company = getVal(headers, row, H_COMPANY);
+    const product = getVal(headers, row, H_PRODUCT);
+    const transferCompany = getVal(headers, row, H_TRANSFER_COMPANY);
+
+    const addField = (label, value) => {
+      const l = document.createElement("span");
+      l.className = "row-field-label";
+      l.textContent = label;
+      const v = document.createElement("span");
+      v.className = "row-field-value";
+      v.textContent = value;
+      fields.appendChild(l);
+      fields.appendChild(v);
+    };
+
+    if (company) addField(H_COMPANY, company);
+    if (product) addField(H_PRODUCT, product);
+    if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
+
     body.appendChild(fields);
 
     const footer = document.createElement("div");
@@ -151,8 +183,8 @@
     const link = document.createElement("button");
     link.type = "button";
     link.className = "edit-link";
-    link.textContent = mode === "update" ? "עריכת שורה >" : "הצג פרטים מלאים >";
-    link.addEventListener("click", () => openModal(row, mode));
+    link.textContent = "עריכת שורה >";
+    link.addEventListener("click", () => openModal(row));
     footer.appendChild(link);
     body.appendChild(footer);
 
@@ -160,44 +192,149 @@
     return card;
   }
 
-  function openModal(row, mode) {
+  function openModal(row) {
     modalBody.innerHTML = "";
-    const isEdit = mode === "update";
-    saveRowBtn.style.display = isEdit ? "block" : "none";
-    activeEditRow = isEdit ? { row_number: row.row_number, headers: state.headers } : null;
+    activeRow = row;
 
-    state.headers.forEach((header, i) => {
+    // reset mark-green button
+    if (markGreenBtn) {
+      markGreenBtn.remove();
+      markGreenBtn = null;
+    }
+    markGreenBtn = document.createElement("button");
+    markGreenBtn.type = "button";
+    markGreenBtn.className = "action-btn";
+    markGreenBtn.style.marginBottom = "8px";
+    markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
+    markGreenBtn.addEventListener("click", () => toggleGreen(row));
+    modalFooter.insertBefore(markGreenBtn, saveRowBtn);
+
+    const headers = state.headers;
+    const statusIdx = headers.indexOf(H_STATUS);
+    const transferIdx = headers.indexOf(H_TRANSFER_ACTUAL);
+
+    headers.forEach((header, i) => {
+      if (i === statusIdx) {
+        renderStatusField(header, row, i);
+        return;
+      }
+      if (i === transferIdx) {
+        renderTransferField(header, row, i, statusIdx);
+        return;
+      }
+
       const field = document.createElement("div");
       field.className = "modal-field";
-      const locked = i === 1; // ID column (B)
+      const locked = header === H_ID;
       if (locked) field.classList.add("locked");
       const label = document.createElement("label");
       label.textContent = header || `עמודה ${i + 1}`;
       field.appendChild(label);
 
-      if (isEdit) {
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = row.values[i] || "";
-        input.dataset.colIndex = i;
-        if (locked) input.disabled = true;
-        field.appendChild(input);
-      } else {
-        const val = document.createElement("input");
-        val.type = "text";
-        val.value = row.values[i] || "";
-        val.disabled = true;
-        field.appendChild(val);
-      }
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = row.values[i] || "";
+      input.dataset.colIndex = i;
+      if (locked) input.disabled = true;
+      field.appendChild(input);
       modalBody.appendChild(field);
     });
 
     modalBackdrop.hidden = false;
   }
 
+  function renderStatusField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const historyBox = document.createElement("textarea");
+    historyBox.value = row.values[i] || "";
+    historyBox.disabled = true;
+    historyBox.rows = 3;
+    historyBox.style.width = "100%";
+    historyBox.style.padding = "10px 12px";
+    historyBox.style.borderRadius = "8px";
+    historyBox.style.border = "1.5px solid var(--line)";
+    historyBox.style.background = "#EFECE4";
+    historyBox.style.color = "var(--ink-soft)";
+    historyBox.style.fontFamily = "inherit";
+    historyBox.style.fontSize = "13px";
+    field.appendChild(historyBox);
+
+    const hint = document.createElement("label");
+    hint.textContent = "הוספת עדכון סטטוס חדש (יתווסף עם תאריך היום מעל ההיסטוריה)";
+    hint.style.marginTop = "8px";
+    field.appendChild(hint);
+
+    const newInput = document.createElement("input");
+    newInput.type = "text";
+    newInput.placeholder = "לדוגמה: נשלחו מסמכים";
+    newInput.dataset.statusUpdateInput = "1";
+    newInput.dataset.origValue = row.values[i] || "";
+    field.appendChild(newInput);
+
+    modalBody.appendChild(field);
+  }
+
+  function renderTransferField(header, row, i, statusIdx) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const origValue = row.values[i] || "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = origValue;
+    input.dataset.colIndex = i;
+    field.appendChild(input);
+
+    const selectWrap = document.createElement("div");
+    selectWrap.style.marginTop = "8px";
+    selectWrap.hidden = true;
+
+    const selectLabel = document.createElement("label");
+    selectLabel.textContent = "לפי מה ידוע שהניוד בוצע?";
+    selectWrap.appendChild(selectLabel);
+
+    const select = document.createElement("select");
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+    select.dataset.transferReasonSelect = "1";
+    select.innerHTML = `
+      <option value="">בחר אפשרות…</option>
+      <option value="daily">לפי דוח יומי</option>
+      <option value="site">לפי אתר</option>
+      <option value="site_confirm">לפי אתר עם אישור בבפי</option>
+    `;
+    selectWrap.appendChild(select);
+    field.appendChild(selectWrap);
+
+    input.addEventListener("input", () => {
+      const changed = input.value.trim() !== "" && input.value.trim() !== origValue.trim();
+      selectWrap.hidden = !changed;
+      if (!changed) select.value = "";
+    });
+
+    modalBody.appendChild(field);
+  }
+
   function closeModal() {
     modalBackdrop.hidden = true;
-    activeEditRow = null;
+    activeRow = null;
+    if (markGreenBtn) {
+      markGreenBtn.remove();
+      markGreenBtn = null;
+    }
   }
 
   modalClose.addEventListener("click", closeModal);
@@ -205,13 +342,67 @@
     if (e.target === modalBackdrop) closeModal();
   });
 
+  async function toggleGreen(row) {
+    markGreenBtn.disabled = true;
+    try {
+      const res = await fetch("/api/mark_row", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_type: state.sheetType,
+          row_number: row.row_number,
+          num_cols: state.headers.length,
+          green: !row.is_green,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה בסימון השורה");
+      showToast(row.is_green ? "הסימון הירוק הוסר" : "השורה סומנה כדווח");
+      closeModal();
+      runSearch(state.mode);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      if (markGreenBtn) markGreenBtn.disabled = false;
+    }
+  }
+
   saveRowBtn.addEventListener("click", async () => {
-    if (!activeEditRow) return;
-    const inputs = [...modalBody.querySelectorAll("input[data-col-index]")];
-    const values = new Array(activeEditRow.headers.length).fill("");
-    inputs.forEach((inp) => {
+    if (!activeRow) return;
+    const headers = state.headers;
+    const values = new Array(headers.length).fill("");
+
+    // normal fields
+    modalBody.querySelectorAll("input[data-col-index]").forEach((inp) => {
       values[Number(inp.dataset.colIndex)] = inp.value;
     });
+
+    const pendingStatusLines = [];
+
+    // transfer-actual logic
+    const transferSelect = modalBody.querySelector("select[data-transfer-reason-select]");
+    if (transferSelect && !transferSelect.closest("div").hidden) {
+      const reasonKey = transferSelect.value;
+      if (!reasonKey) {
+        showToast("יש לבחור לפי מה ידוע שהניוד בוצע", true);
+        return;
+      }
+      pendingStatusLines.push(`${todayStr()}-${TRANSFER_REASON_LABELS[reasonKey]}`);
+    }
+
+    // manual status update
+    const statusInput = modalBody.querySelector("input[data-status-update-input]");
+    if (statusInput && statusInput.value.trim()) {
+      pendingStatusLines.push(`${todayStr()}-${statusInput.value.trim()}`);
+    }
+
+    if (pendingStatusLines.length) {
+      const statusIdx = headers.indexOf(H_STATUS);
+      if (statusIdx !== -1) {
+        const existing = activeRow.values[statusIdx] || "";
+        values[statusIdx] = pendingStatusLines.join("\n") + (existing.trim() ? "\n" + existing : "");
+      }
+    }
 
     saveRowBtn.disabled = true;
     saveRowBtn.textContent = "שומר…";
@@ -221,7 +412,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sheet_type: state.sheetType,
-          row_number: activeEditRow.row_number,
+          row_number: activeRow.row_number,
           values,
         }),
       });
