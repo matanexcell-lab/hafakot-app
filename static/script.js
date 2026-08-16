@@ -252,17 +252,24 @@
 
     const historyBox = document.createElement("textarea");
     historyBox.value = row.values[i] || "";
-    historyBox.disabled = true;
-    historyBox.rows = 3;
+    historyBox.rows = 4;
+    historyBox.dataset.colIndex = i;
     historyBox.style.width = "100%";
     historyBox.style.padding = "10px 12px";
     historyBox.style.borderRadius = "8px";
     historyBox.style.border = "1.5px solid var(--line)";
-    historyBox.style.background = "#EFECE4";
-    historyBox.style.color = "var(--ink-soft)";
+    historyBox.style.background = "var(--paper)";
+    historyBox.style.color = "var(--ink)";
     historyBox.style.fontFamily = "inherit";
     historyBox.style.fontSize = "13px";
     field.appendChild(historyBox);
+
+    const editHint = document.createElement("p");
+    editHint.textContent = "אפשר לתקן כאן ישירות את הטקסט הקיים.";
+    editHint.style.fontSize = "11px";
+    editHint.style.color = "var(--ink-soft)";
+    editHint.style.margin = "4px 0 0";
+    field.appendChild(editHint);
 
     const hint = document.createElement("label");
     hint.textContent = "הוספת עדכון סטטוס חדש (יתווסף עם תאריך היום מעל ההיסטוריה)";
@@ -372,9 +379,9 @@
     const headers = state.headers;
     const values = new Array(headers.length).fill("");
 
-    // normal fields
-    modalBody.querySelectorAll("input[data-col-index]").forEach((inp) => {
-      values[Number(inp.dataset.colIndex)] = inp.value;
+    // normal fields (inputs and the editable status textarea)
+    modalBody.querySelectorAll("[data-col-index]").forEach((el) => {
+      values[Number(el.dataset.colIndex)] = el.value;
     });
 
     const pendingStatusLines = [];
@@ -399,7 +406,7 @@
     if (pendingStatusLines.length) {
       const statusIdx = headers.indexOf(H_STATUS);
       if (statusIdx !== -1) {
-        const existing = activeRow.values[statusIdx] || "";
+        const existing = values[statusIdx] || "";
         values[statusIdx] = pendingStatusLines.join("\n") + (existing.trim() ? "\n" + existing : "");
       }
     }
