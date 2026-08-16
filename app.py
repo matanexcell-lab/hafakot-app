@@ -18,7 +18,7 @@ SHEET_NAMES = {
     "detail": "פרט",
 }
 
-ID_COLUMN_INDEX = 0  # column A, zero-based
+ID_COLUMN_INDEX = 1  # column B, zero-based
 
 
 # ---------- Google Sheets helpers ----------
