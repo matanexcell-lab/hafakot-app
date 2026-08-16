@@ -20,6 +20,13 @@ SHEET_NAMES = {
 
 ID_COLUMN_INDEX = 1  # column B, zero-based
 
+# Header names used for smart behaviors (status auto-log, transfer flow, previews)
+H_COMPANY = "חברה"
+H_TRANSFER_COMPANY = "חברה מעבירה"
+H_PRODUCT = "סוג ההצעה / מוצר"
+H_STATUS = "סטטוס הפקה"
+H_TRANSFER_ACTUAL = "ניוד בפועל"
+
 
 # ---------- Google Sheets helpers ----------
 
@@ -60,22 +67,23 @@ def is_green(color):
     return g > r + 0.04 and g > b + 0.04
 
 
-def resolve_sheet_title(sheet_type):
-    """Ask Google for the exact tab titles and match against our configured name.
-    This avoids mismatches from hidden characters or encoding differences."""
+def resolve_sheet(sheet_type):
+    """Ask Google for the exact tab titles + sheetId and match against our configured name.
+    Returns {"title": ..., "sheetId": ...}. Avoids mismatches from hidden characters."""
     service = get_service()
     target = SHEET_NAMES[sheet_type]
     resp = (
         service.spreadsheets()
-        .get(spreadsheetId=SPREADSHEET_ID, fields="sheets.properties(title)")
+        .get(spreadsheetId=SPREADSHEET_ID, fields="sheets.properties(title,sheetId)")
         .execute()
     )
-    titles = [s["properties"]["title"] for s in resp.get("sheets", [])]
-    for t in titles:
-        if t.strip() == target.strip():
-            return t
+    props = [s["properties"] for s in resp.get("sheets", [])]
+    for p in props:
+        if p["title"].strip() == target.strip():
+            return {"title": p["title"], "sheetId": p["sheetId"]}
+    titles = ", ".join(p["title"] for p in props)
     raise RuntimeError(
-        f"לא נמצא טאב בשם '{target}' בגיליון. הטאבים שנמצאו הם: {', '.join(titles)}"
+        f"לא נמצא טאב בשם '{target}' בגיליון. הטאבים שנמצאו הם: {titles}"
     )
 
 
@@ -85,7 +93,8 @@ def fetch_sheet(sheet_type):
     row_number is 1-indexed as it appears in the actual spreadsheet.
     """
     service = get_service()
-    sheet_name = resolve_sheet_title(sheet_type)
+    sheet_info = resolve_sheet(sheet_type)
+    sheet_name = sheet_info["title"]
     resp = (
         service.spreadsheets()
         .get(
@@ -135,7 +144,7 @@ def fetch_sheet(sheet_type):
 
 def update_row(sheet_type, row_number, values):
     service = get_service()
-    sheet_name = resolve_sheet_title(sheet_type)
+    sheet_name = resolve_sheet(sheet_type)["title"]
     last_col = col_letter(len(values))
     range_ = f"'{sheet_name}'!A{row_number}:{last_col}{row_number}"
     service.spreadsheets().values().update(
@@ -143,6 +152,33 @@ def update_row(sheet_type, row_number, values):
         range=range_,
         valueInputOption="USER_ENTERED",
         body={"values": [values]},
+    ).execute()
+
+
+def set_row_color(sheet_type, row_number, num_cols, green):
+    """Paints (or clears) the background color of an entire row."""
+    service = get_service()
+    sheet_id = resolve_sheet(sheet_type)["sheetId"]
+    color = {"red": 0.714, "green": 0.843, "blue": 0.659} if green else {
+        "red": 1, "green": 1, "blue": 1
+    }
+    requests = [
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_number - 1,
+                    "endRowIndex": row_number,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": num_cols,
+                },
+                "cell": {"userEnteredFormat": {"backgroundColor": color}},
+                "fields": "userEnteredFormat.backgroundColor",
+            }
+        }
+    ]
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
     ).execute()
 
 
@@ -228,6 +264,27 @@ def api_update():
 
     try:
         update_row(sheet_type, row_number, values)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/mark_row", methods=["POST"])
+@login_required
+def api_mark_row():
+    data = request.get_json(force=True)
+    sheet_type = data.get("sheet_type")
+    row_number = data.get("row_number")
+    num_cols = data.get("num_cols")
+    green = bool(data.get("green"))
+
+    if sheet_type not in SHEET_NAMES:
+        return jsonify({"error": "סוג גיליון לא תקין"}), 400
+    if not row_number or not num_cols:
+        return jsonify({"error": "נתונים חסרים"}), 400
+
+    try:
+        set_row_color(sheet_type, row_number, num_cols, green)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
