@@ -159,7 +159,7 @@ def set_row_color(sheet_type, row_number, num_cols, green):
     """Paints (or clears) the background color of an entire row."""
     service = get_service()
     sheet_id = resolve_sheet(sheet_type)["sheetId"]
-    color = {"red": 0.714, "green": 0.843, "blue": 0.659} if green else {
+    color = {"red": 0.573, "green": 0.816, "blue": 0.314} if green else {
         "red": 1, "green": 1, "blue": 1
     }
     requests = [
