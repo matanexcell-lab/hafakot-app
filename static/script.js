@@ -395,13 +395,14 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בסימון השורה");
-      showToast(row.is_green ? "הסימון הירוק הוסר" : "השורה סומנה כדווח");
-      closeModal();
-      runSearch(state.mode);
+      row.is_green = !row.is_green;
+      markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
+      showToast(row.is_green ? "השורה סומנה כדווח" : "הסימון הירוק הוסר");
+      renderResults();
     } catch (err) {
       showToast(err.message, true);
     } finally {
-      if (markGreenBtn) markGreenBtn.disabled = false;
+      markGreenBtn.disabled = false;
     }
   }
 
