@@ -398,7 +398,7 @@
       row.is_green = !row.is_green;
       markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
       showToast(row.is_green ? "השורה סומנה כדווח" : "הסימון הירוק הוסר");
-      renderResults();
+      renderResults(); // refresh the badge/ribbon behind the modal, without closing it
     } catch (err) {
       showToast(err.message, true);
     } finally {
@@ -457,6 +457,7 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בשמירה");
+
       showToast("השורה עודכנה בהצלחה");
       closeModal();
       runSearch(state.mode);
