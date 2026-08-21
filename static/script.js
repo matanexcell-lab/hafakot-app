@@ -5,13 +5,17 @@
   const H_TRANSFER_COMPANY = "חברה מעבירה";
   const H_PRODUCT = "סוג ההצעה / מוצר";
   const H_STATUS = "סטטוס הפקה";
-  const H_TRANSFER_ACTUAL = "ניוד בפועל";
+  const H_LAST_UPDATE = "תאריך עדכון אחרון";
 
-  const TRANSFER_REASON_LABELS = {
-    daily: "ניוד בוצע לפי דוח יומי",
-    site: "ניוד בוצע לפי אתר",
-    site_confirm: "ניוד בוצע לפי אתר אישור בבפי",
+  const STATUS_OPTIONS = {
+    pension: [
+      "ניוד בוצע אישור בבאפי",
+      "ניוד בוצע לפי דוח יומי",
+      "ניוד בוצע לפי אתר",
+    ],
+    detail: ["הופק"],
   };
+  const OTHER_VALUE = "__other__";
 
   const state = {
     sheetType: "pension",
@@ -44,6 +48,7 @@
   let toastTimer = null;
   let activeRow = null; // the row currently open in the modal
   let markGreenBtn = null;
+  let markRedBtn = null;
 
   function showToast(msg, isError) {
     toast.textContent = msg;
@@ -166,7 +171,7 @@
 
   function renderRowCard(row, headers) {
     const card = document.createElement("div");
-    card.className = "row-card" + (row.is_green ? " is-green" : "");
+    card.className = "row-card" + (row.is_green ? " is-green" : row.is_red ? " is-red" : "");
 
     const ribbon = document.createElement("div");
     ribbon.className = "ribbon";
@@ -175,11 +180,12 @@
     const body = document.createElement("div");
     body.className = "row-card-body";
 
+    const statusLabel = row.is_green ? "דווח" : row.is_red ? "לא רלוונטי" : "ממתין";
     const top = document.createElement("div");
     top.className = "row-card-top";
     top.innerHTML = `
       <span class="row-number">שורה ${row.row_number}</span>
-      <span class="status-badge">${row.is_green ? "דווח" : "ממתין"}</span>
+      <span class="status-badge">${statusLabel}</span>
     `;
     body.appendChild(top);
 
@@ -227,30 +233,32 @@
     modalBody.innerHTML = "";
     activeRow = row;
 
-    // reset mark-green button
-    if (markGreenBtn) {
-      markGreenBtn.remove();
-      markGreenBtn = null;
-    }
+    // reset mark buttons
+    if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
+    if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
+
     markGreenBtn = document.createElement("button");
     markGreenBtn.type = "button";
     markGreenBtn.className = "action-btn";
     markGreenBtn.style.marginBottom = "8px";
     markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
-    markGreenBtn.addEventListener("click", () => toggleGreen(row));
+    markGreenBtn.addEventListener("click", () => toggleColor(row, "green"));
     modalFooter.insertBefore(markGreenBtn, saveRowBtn);
+
+    markRedBtn = document.createElement("button");
+    markRedBtn.type = "button";
+    markRedBtn.className = "action-btn";
+    markRedBtn.style.marginBottom = "8px";
+    markRedBtn.textContent = row.is_red ? "בטל סימון אדום (לא רלוונטי)" : "סמן שורה כלא רלוונטי (אדום)";
+    markRedBtn.addEventListener("click", () => toggleColor(row, "red"));
+    modalFooter.insertBefore(markRedBtn, saveRowBtn);
 
     const headers = state.headers;
     const statusIdx = headers.indexOf(H_STATUS);
-    const transferIdx = headers.indexOf(H_TRANSFER_ACTUAL);
 
     headers.forEach((header, i) => {
       if (i === statusIdx) {
         renderStatusField(header, row, i);
-        return;
-      }
-      if (i === transferIdx) {
-        renderTransferField(header, row, i, statusIdx);
         return;
       }
 
@@ -307,39 +315,8 @@
     hint.style.marginTop = "8px";
     field.appendChild(hint);
 
-    const newInput = document.createElement("input");
-    newInput.type = "text";
-    newInput.placeholder = "לדוגמה: נשלחו מסמכים";
-    newInput.dataset.statusUpdateInput = "1";
-    newInput.dataset.origValue = row.values[i] || "";
-    field.appendChild(newInput);
-
-    modalBody.appendChild(field);
-  }
-
-  function renderTransferField(header, row, i, statusIdx) {
-    const field = document.createElement("div");
-    field.className = "modal-field";
-    const label = document.createElement("label");
-    label.textContent = header;
-    field.appendChild(label);
-
-    const origValue = row.values[i] || "";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = origValue;
-    input.dataset.colIndex = i;
-    field.appendChild(input);
-
-    const selectWrap = document.createElement("div");
-    selectWrap.style.marginTop = "8px";
-    selectWrap.hidden = true;
-
-    const selectLabel = document.createElement("label");
-    selectLabel.textContent = "לפי מה ידוע שהניוד בוצע?";
-    selectWrap.appendChild(selectLabel);
-
     const select = document.createElement("select");
+    select.dataset.statusSelect = "1";
     select.style.width = "100%";
     select.style.padding = "10px 12px";
     select.style.borderRadius = "8px";
@@ -347,20 +324,27 @@
     select.style.background = "var(--paper)";
     select.style.fontFamily = "inherit";
     select.style.fontSize = "14px";
-    select.dataset.transferReasonSelect = "1";
-    select.innerHTML = `
-      <option value="">בחר אפשרות…</option>
-      <option value="daily">לפי דוח יומי</option>
-      <option value="site">לפי אתר</option>
-      <option value="site_confirm">לפי אתר עם אישור בבפי</option>
-    `;
-    selectWrap.appendChild(select);
-    field.appendChild(selectWrap);
 
-    input.addEventListener("input", () => {
-      const changed = input.value.trim() !== "" && input.value.trim() !== origValue.trim();
-      selectWrap.hidden = !changed;
-      if (!changed) select.value = "";
+    const options = STATUS_OPTIONS[state.sheetType] || [];
+    let optionsHtml = `<option value="">בחר עדכון…</option>`;
+    options.forEach((opt) => {
+      optionsHtml += `<option value="${opt}">${opt}</option>`;
+    });
+    optionsHtml += `<option value="${OTHER_VALUE}">אחר…</option>`;
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    const otherInput = document.createElement("input");
+    otherInput.type = "text";
+    otherInput.placeholder = "כתוב כאן את העדכון";
+    otherInput.dataset.statusOtherInput = "1";
+    otherInput.style.marginTop = "8px";
+    otherInput.hidden = true;
+    field.appendChild(otherInput);
+
+    select.addEventListener("change", () => {
+      otherInput.hidden = select.value !== OTHER_VALUE;
+      if (otherInput.hidden) otherInput.value = "";
     });
 
     modalBody.appendChild(field);
@@ -369,10 +353,8 @@
   function closeModal() {
     modalBackdrop.hidden = true;
     activeRow = null;
-    if (markGreenBtn) {
-      markGreenBtn.remove();
-      markGreenBtn = null;
-    }
+    if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
+    if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
   }
 
   modalClose.addEventListener("click", closeModal);
@@ -380,8 +362,11 @@
     if (e.target === modalBackdrop) closeModal();
   });
 
-  async function toggleGreen(row) {
+  async function toggleColor(row, colorName) {
+    const isActive = colorName === "green" ? row.is_green : row.is_red;
+    const targetColor = isActive ? "none" : colorName;
     markGreenBtn.disabled = true;
+    markRedBtn.disabled = true;
     try {
       const res = await fetch("/api/mark_row", {
         method: "POST",
@@ -390,20 +375,50 @@
           sheet_type: state.sheetType,
           row_number: row.row_number,
           num_cols: state.headers.length,
-          green: !row.is_green,
+          color: targetColor,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בסימון השורה");
-      row.is_green = !row.is_green;
+
+      row.is_green = targetColor === "green";
+      row.is_red = targetColor === "red";
       markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
-      showToast(row.is_green ? "השורה סומנה כדווח" : "הסימון הירוק הוסר");
+      markRedBtn.textContent = row.is_red ? "בטל סימון אדום (לא רלוונטי)" : "סמן שורה כלא רלוונטי (אדום)";
+
+      await stampLastUpdate(row);
+
+      showToast(
+        targetColor === "none"
+          ? "הסימון הוסר"
+          : targetColor === "green"
+          ? "השורה סומנה כדווח"
+          : "השורה סומנה כלא רלוונטי"
+      );
       renderResults(); // refresh the badge/ribbon behind the modal, without closing it
     } catch (err) {
       showToast(err.message, true);
     } finally {
       markGreenBtn.disabled = false;
+      markRedBtn.disabled = false;
     }
+  }
+
+  async function stampLastUpdate(row) {
+    const idx = state.headers.indexOf(H_LAST_UPDATE);
+    if (idx === -1) return;
+    const newValues = [...row.values];
+    newValues[idx] = todayStr();
+    const res = await fetch("/api/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sheet_type: state.sheetType,
+        row_number: row.row_number,
+        values: newValues,
+      }),
+    });
+    if (res.ok) row.values = newValues;
   }
 
   saveRowBtn.addEventListener("click", async () => {
@@ -418,21 +433,18 @@
 
     const pendingStatusLines = [];
 
-    // transfer-actual logic
-    const transferSelect = modalBody.querySelector("select[data-transfer-reason-select]");
-    if (transferSelect && !transferSelect.closest("div").hidden) {
-      const reasonKey = transferSelect.value;
-      if (!reasonKey) {
-        showToast("יש לבחור לפי מה ידוע שהניוד בוצע", true);
-        return;
+    const statusSelect = modalBody.querySelector("select[data-status-select]");
+    if (statusSelect && statusSelect.value) {
+      let text = statusSelect.value;
+      if (text === OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-status-other-input]");
+        text = otherInput ? otherInput.value.trim() : "";
+        if (!text) {
+          showToast("יש לכתוב את תוכן העדכון בשדה 'אחר'", true);
+          return;
+        }
       }
-      pendingStatusLines.push(`${todayStr()}-${TRANSFER_REASON_LABELS[reasonKey]}`);
-    }
-
-    // manual status update
-    const statusInput = modalBody.querySelector("input[data-status-update-input]");
-    if (statusInput && statusInput.value.trim()) {
-      pendingStatusLines.push(`${todayStr()}-${statusInput.value.trim()}`);
+      pendingStatusLines.push(`${todayStr()}-${text}`);
     }
 
     if (pendingStatusLines.length) {
@@ -441,6 +453,11 @@
         const existing = values[statusIdx] || "";
         values[statusIdx] = (existing.trim() ? existing + "\n" : "") + pendingStatusLines.join("\n");
       }
+    }
+
+    const lastUpdateIdx = headers.indexOf(H_LAST_UPDATE);
+    if (lastUpdateIdx !== -1) {
+      values[lastUpdateIdx] = todayStr();
     }
 
     saveRowBtn.disabled = true;
