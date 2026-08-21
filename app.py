@@ -27,6 +27,7 @@ H_TRANSFER_COMPANY = "חברה מעבירה"
 H_PRODUCT = "סוג ההצעה / מוצר"
 H_STATUS = "סטטוס הפקה"
 H_TRANSFER_ACTUAL = "ניוד בפועל"
+H_LAST_UPDATE = "תאריך עדכון אחרון"
 
 
 # ---------- Google Sheets helpers ----------
@@ -68,6 +69,18 @@ def is_green(color):
     return g > r + 0.04 and g > b + 0.04
 
 
+def is_red(color):
+    """Heuristic: does this background color look like a 'red' highlight?"""
+    if not color:
+        return False
+    r = color.get("red", 1)
+    g = color.get("green", 1)
+    b = color.get("blue", 1)
+    if r > 0.97 and g > 0.97 and b > 0.97:
+        return False
+    return r > g + 0.04 and r > b + 0.04
+
+
 def resolve_sheet(sheet_type):
     """Ask Google for the exact tab titles + sheetId and match against our configured name.
     Returns {"title": ..., "sheetId": ...}. Avoids mismatches from hidden characters."""
@@ -90,7 +103,7 @@ def resolve_sheet(sheet_type):
 
 def fetch_sheet(sheet_type):
     """Returns (headers, rows) where rows is a list of dicts:
-    {row_number, values: [...], is_green: bool}
+    {row_number, values: [...], is_green: bool, is_red: bool}
     row_number is 1-indexed as it appears in the actual spreadsheet.
     """
     service = get_service()
@@ -138,6 +151,7 @@ def fetch_sheet(sheet_type):
                 "row_number": idx,
                 "values": values,
                 "is_green": is_green(row_color),
+                "is_red": is_red(row_color),
             }
         )
     return headers, rows
@@ -156,13 +170,17 @@ def update_row(sheet_type, row_number, values):
     ).execute()
 
 
-def set_row_color(sheet_type, row_number, num_cols, green):
-    """Paints (or clears) the background color of an entire row."""
+def set_row_color(sheet_type, row_number, num_cols, color_name):
+    """Paints (or clears) the background color of an entire row.
+    color_name is one of: "green", "red", "none"."""
     service = get_service()
     sheet_id = resolve_sheet(sheet_type)["sheetId"]
-    color = {"red": 0.573, "green": 0.816, "blue": 0.314} if green else {
-        "red": 1, "green": 1, "blue": 1
+    colors = {
+        "green": {"red": 0.573, "green": 0.816, "blue": 0.314},
+        "red": {"red": 0.957, "green": 0.263, "blue": 0.212},
+        "none": {"red": 1, "green": 1, "blue": 1},
     }
+    color = colors.get(color_name, colors["none"])
     requests = [
         {
             "repeatCell": {
@@ -257,7 +275,7 @@ def api_search():
         ]
 
     if mode == "update":
-        matched = [r for r in matched if not r["is_green"]]
+        matched = [r for r in matched if not r["is_green"] and not r["is_red"]]
 
     return jsonify({"headers": headers, "rows": matched})
 
@@ -289,15 +307,17 @@ def api_mark_row():
     sheet_type = data.get("sheet_type")
     row_number = data.get("row_number")
     num_cols = data.get("num_cols")
-    green = bool(data.get("green"))
+    color = data.get("color", "none")
 
     if sheet_type not in SHEET_NAMES:
         return jsonify({"error": "סוג גיליון לא תקין"}), 400
     if not row_number or not num_cols:
         return jsonify({"error": "נתונים חסרים"}), 400
+    if color not in ("green", "red", "none"):
+        return jsonify({"error": "צבע לא תקין"}), 400
 
     try:
-        set_row_color(sheet_type, row_number, num_cols, green)
+        set_row_color(sheet_type, row_number, num_cols, color)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
