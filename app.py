@@ -146,6 +146,8 @@ def fetch_sheet(sheet_type):
         row_color = None
         if cells:
             row_color = cells[0].get("effectiveFormat", {}).get("backgroundColor")
+        if row_color and not (row_color.get("red", 1) > 0.97 and row_color.get("green", 1) > 0.97 and row_color.get("blue", 1) > 0.97):
+            app.logger.warning(f"DEBUG row {idx} color: {row_color} is_green={is_green(row_color)} is_red={is_red(row_color)}")
         rows.append(
             {
                 "row_number": idx,
@@ -154,6 +156,8 @@ def fetch_sheet(sheet_type):
                 "is_red": is_red(row_color),
             }
         )
+    colored_count = sum(1 for r in rows if r["is_green"] or r["is_red"])
+    app.logger.warning(f"DEBUG fetch_sheet({sheet_type}): {len(rows)} rows, {colored_count} colored")
     return headers, rows
 
 
