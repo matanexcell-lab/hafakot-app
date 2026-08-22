@@ -105,33 +105,51 @@ def fetch_sheet(sheet_type):
     """Returns (headers, rows) where rows is a list of dicts:
     {row_number, values: [...], is_green: bool}
     row_number is 1-indexed as it appears in the actual spreadsheet.
+
+    Uses two lighter API calls instead of one heavy one: values for all
+    columns (no formatting), and background color for column A only.
+    This keeps memory usage low even on large sheets.
     """
     service = get_service()
     sheet_info = resolve_sheet(sheet_type)
     sheet_name = sheet_info["title"]
-    resp = (
+
+    values_resp = (
         service.spreadsheets()
         .get(
             spreadsheetId=SPREADSHEET_ID,
             ranges=[f"'{sheet_name}'"],
             includeGridData=True,
-            fields="sheets(data(rowData(values(formattedValue,effectiveFormat.backgroundColor))))",
+            fields="sheets(data(rowData(values(formattedValue))))",
         )
         .execute()
     )
-    sheets = resp.get("sheets", [])
-    if not sheets:
+    color_resp = (
+        service.spreadsheets()
+        .get(
+            spreadsheetId=SPREADSHEET_ID,
+            ranges=[f"'{sheet_name}'!A:A"],
+            includeGridData=True,
+            fields="sheets(data(rowData(values(effectiveFormat.backgroundColor))))",
+        )
+        .execute()
+    )
+
+    v_sheets = values_resp.get("sheets", [])
+    c_sheets = color_resp.get("sheets", [])
+    if not v_sheets:
         return [], []
-    row_data = sheets[0].get("data", [{}])[0].get("rowData", [])
-    if not row_data:
+    v_row_data = v_sheets[0].get("data", [{}])[0].get("rowData", [])
+    c_row_data = c_sheets[0].get("data", [{}])[0].get("rowData", []) if c_sheets else []
+    if not v_row_data:
         return [], []
 
-    header_cells = row_data[0].get("values", [])
+    header_cells = v_row_data[0].get("values", [])
     headers = [c.get("formattedValue", "") for c in header_cells]
     num_cols = len(headers)
 
     rows = []
-    for idx, row in enumerate(row_data[1:], start=2):
+    for idx, row in enumerate(v_row_data[1:], start=2):
         cells = row.get("values", [])
         if not cells:
             continue
@@ -143,9 +161,14 @@ def fetch_sheet(sheet_type):
                 values.append("")
         if not any(v.strip() for v in values):
             continue
+
         row_color = None
-        if cells:
-            row_color = cells[0].get("effectiveFormat", {}).get("backgroundColor")
+        color_row_idx = idx - 1  # 0-indexed into c_row_data
+        if color_row_idx < len(c_row_data):
+            c_cells = c_row_data[color_row_idx].get("values", [])
+            if c_cells:
+                row_color = c_cells[0].get("effectiveFormat", {}).get("backgroundColor")
+
         rows.append(
             {
                 "row_number": idx,
