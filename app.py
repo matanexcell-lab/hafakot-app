@@ -146,6 +146,8 @@ def fetch_sheet(sheet_type):
         row_color = None
         if cells:
             row_color = cells[0].get("effectiveFormat", {}).get("backgroundColor")
+        if idx == 766:
+            app.logger.warning(f"DEBUG row 766 color={row_color} is_green={is_green(row_color)} is_red={is_red(row_color)}")
         rows.append(
             {
                 "row_number": idx,
