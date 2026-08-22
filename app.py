@@ -57,28 +57,28 @@ def col_letter(n):
     return result
 
 
-def is_green(color):
-    """Heuristic: does this background color look like a 'green' highlight?"""
+GREEN_RGB = {"red": 0.573, "green": 0.816, "blue": 0.314}
+RED_RGB = {"red": 0.957, "green": 0.263, "blue": 0.212}
+
+
+def _close_to(color, target, tol=0.03):
     if not color:
         return False
-    r = color.get("red", 1)
-    g = color.get("green", 1)
-    b = color.get("blue", 1)
-    if r > 0.97 and g > 0.97 and b > 0.97:
-        return False
-    return g > r + 0.04 and g > b + 0.04
+    return (
+        abs(color.get("red", 1) - target["red"]) <= tol
+        and abs(color.get("green", 1) - target["green"]) <= tol
+        and abs(color.get("blue", 1) - target["blue"]) <= tol
+    )
+
+
+def is_green(color):
+    """Is this exactly the green we use for 'reported' rows?"""
+    return _close_to(color, GREEN_RGB)
 
 
 def is_red(color):
-    """Heuristic: does this background color look like a 'red' highlight?"""
-    if not color:
-        return False
-    r = color.get("red", 1)
-    g = color.get("green", 1)
-    b = color.get("blue", 1)
-    if r > 0.97 and g > 0.97 and b > 0.97:
-        return False
-    return r > g + 0.04 and r > b + 0.04
+    """Is this exactly the red we use for 'not relevant' rows?"""
+    return _close_to(color, RED_RGB)
 
 
 def resolve_sheet(sheet_type):
@@ -103,7 +103,7 @@ def resolve_sheet(sheet_type):
 
 def fetch_sheet(sheet_type):
     """Returns (headers, rows) where rows is a list of dicts:
-    {row_number, values: [...], is_green: bool, is_red: bool}
+    {row_number, values: [...], is_green: bool}
     row_number is 1-indexed as it appears in the actual spreadsheet.
     """
     service = get_service()
@@ -146,8 +146,6 @@ def fetch_sheet(sheet_type):
         row_color = None
         if cells:
             row_color = cells[0].get("effectiveFormat", {}).get("backgroundColor")
-        if row_color and not (row_color.get("red", 1) > 0.97 and row_color.get("green", 1) > 0.97 and row_color.get("blue", 1) > 0.97):
-            app.logger.warning(f"DEBUG row {idx} color: {row_color} is_green={is_green(row_color)} is_red={is_red(row_color)}")
         rows.append(
             {
                 "row_number": idx,
@@ -156,8 +154,6 @@ def fetch_sheet(sheet_type):
                 "is_red": is_red(row_color),
             }
         )
-    colored_count = sum(1 for r in rows if r["is_green"] or r["is_red"])
-    app.logger.warning(f"DEBUG fetch_sheet({sheet_type}): {len(rows)} rows, {colored_count} colored")
     return headers, rows
 
 
@@ -180,8 +176,8 @@ def set_row_color(sheet_type, row_number, num_cols, color_name):
     service = get_service()
     sheet_id = resolve_sheet(sheet_type)["sheetId"]
     colors = {
-        "green": {"red": 0.573, "green": 0.816, "blue": 0.314},
-        "red": {"red": 0.957, "green": 0.263, "blue": 0.212},
+        "green": GREEN_RGB,
+        "red": RED_RGB,
         "none": {"red": 1, "green": 1, "blue": 1},
     }
     color = colors.get(color_name, colors["none"])
