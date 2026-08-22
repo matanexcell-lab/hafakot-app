@@ -386,8 +386,6 @@
       markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
       markRedBtn.textContent = row.is_red ? "בטל סימון אדום (לא רלוונטי)" : "סמן שורה כלא רלוונטי (אדום)";
 
-      await stampLastUpdate(row);
-
       showToast(
         targetColor === "none"
           ? "הסימון הוסר"
@@ -402,23 +400,6 @@
       markGreenBtn.disabled = false;
       markRedBtn.disabled = false;
     }
-  }
-
-  async function stampLastUpdate(row) {
-    const idx = state.headers.indexOf(H_LAST_UPDATE);
-    if (idx === -1) return;
-    const newValues = [...row.values];
-    newValues[idx] = todayStr();
-    const res = await fetch("/api/update", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sheet_type: state.sheetType,
-        row_number: row.row_number,
-        values: newValues,
-      }),
-    });
-    if (res.ok) row.values = newValues;
   }
 
   saveRowBtn.addEventListener("click", async () => {
@@ -474,6 +455,20 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בשמירה");
+
+      // Re-assert the row's color (if any), in case saving values reset it.
+      if (activeRow.is_green || activeRow.is_red) {
+        await fetch("/api/mark_row", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sheet_type: state.sheetType,
+            row_number: activeRow.row_number,
+            num_cols: state.headers.length,
+            color: activeRow.is_green ? "green" : "red",
+          }),
+        });
+      }
 
       showToast("השורה עודכנה בהצלחה");
       closeModal();
