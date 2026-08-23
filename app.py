@@ -300,6 +300,9 @@ def api_search():
     if mode == "update":
         matched = [r for r in matched if not r["is_green"] and not r["is_red"]]
 
+    for r in matched:
+        app.logger.warning(f"DEBUG matched row {r['row_number']}: is_green={r['is_green']} is_red={r['is_red']}")
+
     return jsonify({"headers": headers, "rows": matched})
 
 
