@@ -342,6 +342,8 @@ def api_mark_row():
     if color not in ("green", "red", "none"):
         return jsonify({"error": "צבע לא תקין"}), 400
 
+    app.logger.warning(f"DEBUG mark_row called: sheet_type={sheet_type} row_number={row_number} num_cols={num_cols} color={color}")
+
     try:
         set_row_color(sheet_type, row_number, num_cols, color)
     except RuntimeError as e:
