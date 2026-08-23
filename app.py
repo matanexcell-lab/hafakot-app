@@ -214,8 +214,12 @@ def set_row_color(sheet_type, row_number, num_cols, color_name):
                     "startColumnIndex": 0,
                     "endColumnIndex": num_cols,
                 },
-                "cell": {"userEnteredFormat": {"backgroundColor": color}},
-                "fields": "userEnteredFormat.backgroundColor",
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColorStyle": {"rgbColor": color}
+                    }
+                },
+                "fields": "userEnteredFormat.backgroundColorStyle",
             }
         }
     ]
@@ -300,9 +304,6 @@ def api_search():
     if mode == "update":
         matched = [r for r in matched if not r["is_green"] and not r["is_red"]]
 
-    for r in matched:
-        app.logger.warning(f"DEBUG matched row {r['row_number']}: is_green={r['is_green']} is_red={r['is_red']}")
-
     return jsonify({"headers": headers, "rows": matched})
 
 
@@ -341,8 +342,6 @@ def api_mark_row():
         return jsonify({"error": "נתונים חסרים"}), 400
     if color not in ("green", "red", "none"):
         return jsonify({"error": "צבע לא תקין"}), 400
-
-    app.logger.warning(f"DEBUG mark_row called: sheet_type={sheet_type} row_number={row_number} num_cols={num_cols} color={color}")
 
     try:
         set_row_color(sheet_type, row_number, num_cols, color)
