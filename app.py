@@ -1,10 +1,11 @@
 import os
 import json
 from functools import wraps
+from urllib.parse import quote
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
+from google.auth.transport.requests import AuthorizedSession
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -32,20 +33,49 @@ H_LAST_UPDATE = "תאריך עדכון אחרון"
 
 # ---------- Google Sheets helpers ----------
 
-_service = None
+SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
+
+_http = None
 
 
-def get_service():
-    global _service
-    if _service is not None:
-        return _service
+def get_http():
+    global _http
+    if _http is not None:
+        return _http
     creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not creds_json:
         raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON environment variable")
     creds_dict = json.loads(creds_json)
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    _service = build("sheets", "v4", credentials=creds)
-    return _service
+    _http = AuthorizedSession(creds)
+    return _http
+
+
+def _api_get(params):
+    http = get_http()
+    resp = http.get(f"{SHEETS_API_BASE}/{SPREADSHEET_ID}", params=params)
+    if not resp.ok:
+        raise RuntimeError(f"שגיאה מגוגל שיטס: {resp.status_code} {resp.text[:300]}")
+    return resp.json()
+
+
+def _api_put_values(range_, values):
+    http = get_http()
+    url = f"{SHEETS_API_BASE}/{SPREADSHEET_ID}/values/{quote(range_, safe='')}"
+    resp = http.put(
+        url,
+        params={"valueInputOption": "USER_ENTERED"},
+        json={"values": [values]},
+    )
+    if not resp.ok:
+        raise RuntimeError(f"שגיאה בשמירה לגוגל שיטס: {resp.status_code} {resp.text[:300]}")
+
+
+def _api_batch_update(requests_body):
+    http = get_http()
+    resp = http.post(f"{SHEETS_API_BASE}/{SPREADSHEET_ID}:batchUpdate", json={"requests": requests_body})
+    if not resp.ok:
+        raise RuntimeError(f"שגיאה בעדכון פורמט בגוגל שיטס: {resp.status_code} {resp.text[:300]}")
 
 
 def col_letter(n):
@@ -84,14 +114,9 @@ def is_red(color):
 def resolve_sheet(sheet_type):
     """Ask Google for the exact tab titles + sheetId and match against our configured name.
     Returns {"title": ..., "sheetId": ...}. Avoids mismatches from hidden characters."""
-    service = get_service()
     target = SHEET_NAMES[sheet_type]
-    resp = (
-        service.spreadsheets()
-        .get(spreadsheetId=SPREADSHEET_ID, fields="sheets.properties(title,sheetId)")
-        .execute()
-    )
-    props = [s["properties"] for s in resp.get("sheets", [])]
+    data = _api_get({"fields": "sheets.properties(title,sheetId)"})
+    props = [s["properties"] for s in data.get("sheets", [])]
     for p in props:
         if p["title"].strip() == target.strip():
             return {"title": p["title"], "sheetId": p["sheetId"]}
@@ -110,30 +135,19 @@ def fetch_sheet(sheet_type):
     columns (no formatting), and background color for column A only.
     This keeps memory usage low even on large sheets.
     """
-    service = get_service()
     sheet_info = resolve_sheet(sheet_type)
     sheet_name = sheet_info["title"]
 
-    values_resp = (
-        service.spreadsheets()
-        .get(
-            spreadsheetId=SPREADSHEET_ID,
-            ranges=[f"'{sheet_name}'"],
-            includeGridData=True,
-            fields="sheets(data(rowData(values(formattedValue))))",
-        )
-        .execute()
-    )
-    color_resp = (
-        service.spreadsheets()
-        .get(
-            spreadsheetId=SPREADSHEET_ID,
-            ranges=[f"'{sheet_name}'!A:A"],
-            includeGridData=True,
-            fields="sheets(data(rowData(values(effectiveFormat.backgroundColor))))",
-        )
-        .execute()
-    )
+    values_resp = _api_get({
+        "ranges": f"'{sheet_name}'",
+        "includeGridData": "true",
+        "fields": "sheets(data(rowData(values(formattedValue))))",
+    })
+    color_resp = _api_get({
+        "ranges": f"'{sheet_name}'!A:A",
+        "includeGridData": "true",
+        "fields": "sheets(data(rowData(values(effectiveFormat.backgroundColor))))",
+    })
 
     v_sheets = values_resp.get("sheets", [])
     c_sheets = color_resp.get("sheets", [])
@@ -181,22 +195,15 @@ def fetch_sheet(sheet_type):
 
 
 def update_row(sheet_type, row_number, values):
-    service = get_service()
     sheet_name = resolve_sheet(sheet_type)["title"]
     last_col = col_letter(len(values))
     range_ = f"'{sheet_name}'!A{row_number}:{last_col}{row_number}"
-    service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=range_,
-        valueInputOption="USER_ENTERED",
-        body={"values": [values]},
-    ).execute()
+    _api_put_values(range_, values)
 
 
 def set_row_color(sheet_type, row_number, num_cols, color_name):
     """Paints (or clears) the background color of an entire row.
     color_name is one of: "green", "red", "none"."""
-    service = get_service()
     sheet_id = resolve_sheet(sheet_type)["sheetId"]
     colors = {
         "green": GREEN_RGB,
@@ -204,7 +211,7 @@ def set_row_color(sheet_type, row_number, num_cols, color_name):
         "none": {"red": 1, "green": 1, "blue": 1},
     }
     color = colors.get(color_name, colors["none"])
-    requests = [
+    requests_body = [
         {
             "repeatCell": {
                 "range": {
@@ -223,9 +230,7 @@ def set_row_color(sheet_type, row_number, num_cols, color_name):
             }
         }
     ]
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
-    ).execute()
+    _api_batch_update(requests_body)
 
 
 # ---------- Auth ----------
