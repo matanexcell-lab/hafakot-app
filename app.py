@@ -233,6 +233,24 @@ def set_row_color(sheet_type, row_number, num_cols, color_name):
     _api_batch_update(requests_body)
 
 
+def delete_row(sheet_type, row_number):
+    """Deletes an entire row from the sheet (rows below shift up)."""
+    sheet_id = resolve_sheet(sheet_type)["sheetId"]
+    requests_body = [
+        {
+            "deleteDimension": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": row_number - 1,
+                    "endIndex": row_number,
+                }
+            }
+        }
+    ]
+    _api_batch_update(requests_body)
+
+
 # ---------- Auth ----------
 
 
@@ -296,11 +314,15 @@ def api_search():
     if search_by == "company":
         if H_COMPANY not in headers:
             return jsonify({"error": f"לא נמצאה עמודה בשם '{H_COMPANY}'"}), 500
-        company_idx = headers.index(H_COMPANY)
+        idx = headers.index(H_COMPANY)
         q = query.lower()
-        matched = [
-            r for r in rows if r["values"] and q in r["values"][company_idx].lower()
-        ]
+        matched = [r for r in rows if r["values"] and q in r["values"][idx].lower()]
+    elif search_by == "name":
+        if H_CLIENT_NAME not in headers:
+            return jsonify({"error": f"לא נמצאה עמודה בשם '{H_CLIENT_NAME}'"}), 500
+        idx = headers.index(H_CLIENT_NAME)
+        q = query.lower()
+        matched = [r for r in rows if r["values"] and q in r["values"][idx].lower()]
     else:
         matched = [
             r for r in rows if r["values"] and r["values"][ID_COLUMN_INDEX].strip() == query
@@ -350,6 +372,25 @@ def api_mark_row():
 
     try:
         set_row_color(sheet_type, row_number, num_cols, color)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/delete_row", methods=["POST"])
+@login_required
+def api_delete_row():
+    data = request.get_json(force=True)
+    sheet_type = data.get("sheet_type")
+    row_number = data.get("row_number")
+
+    if sheet_type not in SHEET_NAMES:
+        return jsonify({"error": "סוג גיליון לא תקין"}), 400
+    if not row_number:
+        return jsonify({"error": "נתונים חסרים"}), 400
+
+    try:
+        delete_row(sheet_type, row_number)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
