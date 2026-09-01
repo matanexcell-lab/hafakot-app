@@ -17,6 +17,12 @@
   };
   const OTHER_VALUE = "__other__";
 
+  const SEARCH_LABELS = {
+    tz: { label: "תעודת זהות לקוח", placeholder: "לדוגמה: 123456789", numeric: true },
+    name: { label: "שם לקוח", placeholder: "לדוגמה: ישראל ישראלי", numeric: false },
+    company: { label: "שם חברה", placeholder: "לדוגמה: הראל", numeric: false },
+  };
+
   const state = {
     sheetType: "pension",
     searchBy: "tz",
@@ -46,9 +52,11 @@
   const toast = document.getElementById("toast");
 
   let toastTimer = null;
-  let activeRow = null; // the row currently open in the modal
+  let activeRow = null;
   let markGreenBtn = null;
   let markRedBtn = null;
+  let deleteRowBtn = null;
+  let deleteConfirmPending = false;
 
   function showToast(msg, isError) {
     toast.textContent = msg;
@@ -76,16 +84,15 @@
     [...searchByGroup.children].forEach((c) => c.classList.remove("active"));
     btn.classList.add("active");
     state.searchBy = btn.dataset.value;
-    if (state.searchBy === "company") {
-      searchLabel.textContent = "שם חברה";
-      tzInput.placeholder = "לדוגמה: הראל";
-      tzInput.inputMode = "text";
-      tzInput.removeAttribute("maxlength");
-    } else {
-      searchLabel.textContent = "תעודת זהות לקוח";
-      tzInput.placeholder = "לדוגמה: 123456789";
+    const cfg = SEARCH_LABELS[state.searchBy];
+    searchLabel.textContent = cfg.label;
+    tzInput.placeholder = cfg.placeholder;
+    if (cfg.numeric) {
       tzInput.inputMode = "numeric";
       tzInput.maxLength = 9;
+    } else {
+      tzInput.inputMode = "text";
+      tzInput.removeAttribute("maxlength");
     }
     tzInput.value = "";
   });
@@ -112,7 +119,7 @@
   async function runSearch(mode) {
     const query = tzInput.value.trim();
     if (!query) {
-      showToast(state.searchBy === "company" ? "יש להזין שם חברה" : "יש להזין תעודת זהות", true);
+      showToast(`יש להזין ${SEARCH_LABELS[state.searchBy].label}`, true);
       tzInput.focus();
       return;
     }
@@ -152,8 +159,8 @@
       resultsPanel.hidden = true;
       emptyText.textContent =
         mode === "update"
-          ? "לא נמצאו שורות הממתינות לעדכון עבור תעודת הזהות הזו"
-          : "לא נמצאו שורות עבור תעודת הזהות הזו";
+          ? "לא נמצאו שורות הממתינות לעדכון"
+          : "לא נמצאו שורות";
       emptyState.hidden = false;
       return;
     }
@@ -208,7 +215,7 @@
       fields.appendChild(v);
     };
 
-    if (state.searchBy === "company" && clientName) addField(H_CLIENT_NAME, clientName);
+    if (state.searchBy !== "name" && clientName) addField(H_CLIENT_NAME, clientName);
     if (company) addField(H_COMPANY, company);
     if (product) addField(H_PRODUCT, product);
     if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
@@ -232,15 +239,15 @@
   function openModal(row) {
     modalBody.innerHTML = "";
     activeRow = row;
+    deleteConfirmPending = false;
 
-    // reset mark buttons
     if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
     if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
+    if (deleteRowBtn) { deleteRowBtn.remove(); deleteRowBtn = null; }
 
     markGreenBtn = document.createElement("button");
     markGreenBtn.type = "button";
     markGreenBtn.className = "action-btn";
-    markGreenBtn.style.marginBottom = "8px";
     markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
     markGreenBtn.addEventListener("click", () => toggleColor(row, "green"));
     modalFooter.insertBefore(markGreenBtn, saveRowBtn);
@@ -248,10 +255,16 @@
     markRedBtn = document.createElement("button");
     markRedBtn.type = "button";
     markRedBtn.className = "action-btn";
-    markRedBtn.style.marginBottom = "8px";
     markRedBtn.textContent = row.is_red ? "בטל סימון אדום (לא רלוונטי)" : "סמן שורה כלא רלוונטי (אדום)";
     markRedBtn.addEventListener("click", () => toggleColor(row, "red"));
     modalFooter.insertBefore(markRedBtn, saveRowBtn);
+
+    deleteRowBtn = document.createElement("button");
+    deleteRowBtn.type = "button";
+    deleteRowBtn.className = "action-btn danger";
+    deleteRowBtn.textContent = "מחיקת שורה";
+    deleteRowBtn.addEventListener("click", () => handleDeleteClick(row));
+    modalFooter.insertBefore(deleteRowBtn, saveRowBtn);
 
     const headers = state.headers;
     const statusIdx = headers.indexOf(H_STATUS);
@@ -353,8 +366,10 @@
   function closeModal() {
     modalBackdrop.hidden = true;
     activeRow = null;
+    deleteConfirmPending = false;
     if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
     if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
+    if (deleteRowBtn) { deleteRowBtn.remove(); deleteRowBtn = null; }
   }
 
   modalClose.addEventListener("click", closeModal);
@@ -393,7 +408,7 @@
           ? "השורה סומנה כדווח"
           : "השורה סומנה כלא רלוונטי"
       );
-      renderResults(); // refresh the badge/ribbon behind the modal, without closing it
+      renderResults();
     } catch (err) {
       showToast(err.message, true);
     } finally {
@@ -402,12 +417,52 @@
     }
   }
 
+  function handleDeleteClick(row) {
+    if (!deleteConfirmPending) {
+      deleteConfirmPending = true;
+      deleteRowBtn.textContent = "לחץ שוב לאישור המחיקה";
+      showToast("לחץ שוב על 'מחיקת שורה' תוך כמה שניות כדי לאשר", true);
+      setTimeout(() => {
+        if (deleteConfirmPending) {
+          deleteConfirmPending = false;
+          if (deleteRowBtn) deleteRowBtn.textContent = "מחיקת שורה";
+        }
+      }, 5000);
+      return;
+    }
+    deleteRow(row);
+  }
+
+  async function deleteRow(row) {
+    deleteRowBtn.disabled = true;
+    try {
+      const res = await fetch("/api/delete_row", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_type: state.sheetType,
+          row_number: row.row_number,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה במחיקת השורה");
+      showToast("השורה נמחקה");
+      closeModal();
+      runSearch(state.mode);
+    } catch (err) {
+      showToast(err.message, true);
+      deleteConfirmPending = false;
+      if (deleteRowBtn) deleteRowBtn.textContent = "מחיקת שורה";
+    } finally {
+      if (deleteRowBtn) deleteRowBtn.disabled = false;
+    }
+  }
+
   saveRowBtn.addEventListener("click", async () => {
     if (!activeRow) return;
     const headers = state.headers;
     const values = new Array(headers.length).fill("");
 
-    // normal fields (inputs and the editable status textarea)
     modalBody.querySelectorAll("[data-col-index]").forEach((el) => {
       values[Number(el.dataset.colIndex)] = el.value;
     });
@@ -455,20 +510,6 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בשמירה");
-
-      // Re-assert the row's color (if any), in case saving values reset it.
-      if (activeRow.is_green || activeRow.is_red) {
-        await fetch("/api/mark_row", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sheet_type: state.sheetType,
-            row_number: activeRow.row_number,
-            num_cols: state.headers.length,
-            color: activeRow.is_green ? "green" : "red",
-          }),
-        });
-      }
 
       showToast("השורה עודכנה בהצלחה");
       closeModal();
