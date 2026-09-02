@@ -1,4 +1,12 @@
-```javascript
+window.addEventListener("error", (e) => {
+  document.body.insertAdjacentHTML(
+    "afterbegin",
+    `<div style="background:#c0392b;color:#fff;padding:14px;font-size:13px;direction:ltr;text-align:left;white-space:pre-wrap;">JS ERROR: ${e.message}
+File: ${e.filename}
+Line: ${e.lineno}:${e.colno}</div>`
+  );
+});
+
 (() => {
   const H_ID = "ת.ז";
   const H_CLIENT_NAME = "שם לקוח";
@@ -602,4 +610,3 @@
     }
   });
 })();
-```
