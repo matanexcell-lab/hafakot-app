@@ -15,6 +15,18 @@
     ],
     detail: ["הופק"],
   };
+  const COMPANY_OPTIONS = [
+    "הראל",
+    "ילין לפידות",
+    "מיטב",
+    "מגדל",
+    "כלל",
+    "הפניקס",
+    "אלטשולר שחם",
+    "אנליסט",
+    "הכשרה",
+  ];
+  const COMPANY_OTHER_VALUE = "__other_company__";
   const OTHER_VALUE = "__other__";
 
   const SEARCH_LABELS = {
@@ -52,7 +64,7 @@
   const toast = document.getElementById("toast");
 
   let toastTimer = null;
-  let activeRow = null;
+  let activeRow = null; // the row currently open in the modal
   let markGreenBtn = null;
   let markRedBtn = null;
   let deleteRowBtn = null;
@@ -241,6 +253,7 @@
     activeRow = row;
     deleteConfirmPending = false;
 
+    // reset footer buttons
     if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
     if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
     if (deleteRowBtn) { deleteRowBtn.remove(); deleteRowBtn = null; }
@@ -268,10 +281,15 @@
 
     const headers = state.headers;
     const statusIdx = headers.indexOf(H_STATUS);
+    const companyIdx = headers.indexOf(H_COMPANY);
 
     headers.forEach((header, i) => {
       if (i === statusIdx) {
         renderStatusField(header, row, i);
+        return;
+      }
+      if (i === companyIdx) {
+        renderCompanyField(header, row, i);
         return;
       }
 
@@ -357,6 +375,52 @@
 
     select.addEventListener("change", () => {
       otherInput.hidden = select.value !== OTHER_VALUE;
+      if (otherInput.hidden) otherInput.value = "";
+    });
+
+    modalBody.appendChild(field);
+  }
+
+  function renderCompanyField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const currentValue = (row.values[i] || "").trim();
+    const isKnown = COMPANY_OPTIONS.includes(currentValue);
+
+    const select = document.createElement("select");
+    select.dataset.companySelect = "1";
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+
+    let optionsHtml = "";
+    COMPANY_OPTIONS.forEach((opt) => {
+      optionsHtml += `<option value="${opt}"${opt === currentValue ? " selected" : ""}>${opt}</option>`;
+    });
+    optionsHtml += `<option value="${COMPANY_OTHER_VALUE}"${!isKnown && currentValue ? " selected" : ""}>אחר…</option>`;
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    const otherInput = document.createElement("input");
+    otherInput.type = "text";
+    otherInput.placeholder = "שם חברה";
+    otherInput.dataset.companyOtherInput = "1";
+    otherInput.style.marginTop = "8px";
+    otherInput.value = !isKnown ? currentValue : "";
+    otherInput.hidden = isKnown || !currentValue ? true : false;
+    if (select.value === COMPANY_OTHER_VALUE) otherInput.hidden = false;
+    field.appendChild(otherInput);
+
+    select.addEventListener("change", () => {
+      otherInput.hidden = select.value !== COMPANY_OTHER_VALUE;
       if (otherInput.hidden) otherInput.value = "";
     });
 
@@ -494,6 +558,21 @@
     const lastUpdateIdx = headers.indexOf(H_LAST_UPDATE);
     if (lastUpdateIdx !== -1) {
       values[lastUpdateIdx] = todayStr();
+    }
+
+    const companyIdx = headers.indexOf(H_COMPANY);
+    const companySelect = modalBody.querySelector("select[data-company-select]");
+    if (companyIdx !== -1 && companySelect) {
+      let companyValue = companySelect.value;
+      if (companyValue === COMPANY_OTHER_VALUE) {
+        const companyOtherInput = modalBody.querySelector("input[data-company-other-input]");
+        companyValue = companyOtherInput ? companyOtherInput.value.trim() : "";
+        if (!companyValue) {
+          showToast("יש לכתוב את שם החברה בשדה 'אחר'", true);
+          return;
+        }
+      }
+      values[companyIdx] = companyValue;
     }
 
     saveRowBtn.disabled = true;
