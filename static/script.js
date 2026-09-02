@@ -1,3 +1,4 @@
+```javascript
 (() => {
   const H_ID = "ת.ז";
   const H_CLIENT_NAME = "שם לקוח";
@@ -601,3 +602,4 @@
     }
   });
 })();
+```
