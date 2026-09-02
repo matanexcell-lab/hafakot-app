@@ -53,6 +53,7 @@ Line: ${e.lineno}:${e.colno}</div>`
   };
 
   const tzInput = document.getElementById("tz-input");
+  const companySearchSelect = document.getElementById("company-search-select");
   const searchLabel = document.getElementById("search-label");
   const searchByGroup = document.getElementById("search-by-group");
   const sheetTypeGroup = document.getElementById("sheet-type-group");
@@ -99,6 +100,10 @@ Line: ${e.lineno}:${e.colno}</div>`
     return (row.values[idx] || "").trim();
   }
 
+  companySearchSelect.innerHTML =
+    `<option value="">בחר חברה…</option>` +
+    COMPANY_OPTIONS.map((opt) => `<option value="${opt}">${opt}</option>`).join("");
+
   searchByGroup.addEventListener("click", (e) => {
     const btn = e.target.closest(".segment");
     if (!btn) return;
@@ -107,15 +112,23 @@ Line: ${e.lineno}:${e.colno}</div>`
     state.searchBy = btn.dataset.value;
     const cfg = SEARCH_LABELS[state.searchBy];
     searchLabel.textContent = cfg.label;
-    tzInput.placeholder = cfg.placeholder;
-    if (cfg.numeric) {
-      tzInput.inputMode = "numeric";
-      tzInput.maxLength = 9;
+    if (state.searchBy === "company") {
+      tzInput.hidden = true;
+      companySearchSelect.hidden = false;
+      companySearchSelect.value = "";
     } else {
-      tzInput.inputMode = "text";
-      tzInput.removeAttribute("maxlength");
+      companySearchSelect.hidden = true;
+      tzInput.hidden = false;
+      tzInput.placeholder = cfg.placeholder;
+      if (cfg.numeric) {
+        tzInput.inputMode = "numeric";
+        tzInput.maxLength = 9;
+      } else {
+        tzInput.inputMode = "text";
+        tzInput.removeAttribute("maxlength");
+      }
+      tzInput.value = "";
     }
-    tzInput.value = "";
   });
 
   sheetTypeGroup.addEventListener("click", (e) => {
@@ -138,10 +151,10 @@ Line: ${e.lineno}:${e.colno}</div>`
   }
 
   async function runSearch(mode) {
-    const query = tzInput.value.trim();
+    const query = state.searchBy === "company" ? companySearchSelect.value.trim() : tzInput.value.trim();
     if (!query) {
-      showToast(`יש להזין ${SEARCH_LABELS[state.searchBy].label}`, true);
-      tzInput.focus();
+      showToast(`יש לבחור/להזין ${SEARCH_LABELS[state.searchBy].label}`, true);
+      if (state.searchBy !== "company") tzInput.focus();
       return;
     }
     state.mode = mode;
