@@ -71,6 +71,18 @@ def _api_put_values(range_, values):
         raise RuntimeError(f"שגיאה בשמירה לגוגל שיטס: {resp.status_code} {resp.text[:300]}")
 
 
+def _api_append_values(range_, values):
+    http = get_http()
+    url = f"{SHEETS_API_BASE}/{SPREADSHEET_ID}/values/{quote(range_, safe='')}:append"
+    resp = http.post(
+        url,
+        params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
+        json={"values": [values]},
+    )
+    if not resp.ok:
+        raise RuntimeError(f"שגיאה ביצירת שורה בגוגל שיטס: {resp.status_code} {resp.text[:300]}")
+
+
 def _api_batch_update(requests_body):
     http = get_http()
     resp = http.post(f"{SHEETS_API_BASE}/{SPREADSHEET_ID}:batchUpdate", json={"requests": requests_body})
@@ -192,6 +204,29 @@ def fetch_sheet(sheet_type):
             }
         )
     return headers, rows
+
+
+def fetch_headers(sheet_type):
+    """Returns just the header row (row 1) - lightweight, used for the new-row form."""
+    sheet_name = resolve_sheet(sheet_type)["title"]
+    data = _api_get({
+        "ranges": f"'{sheet_name}'!1:1",
+        "includeGridData": "true",
+        "fields": "sheets(data(rowData(values(formattedValue))))",
+    })
+    sheets = data.get("sheets", [])
+    if not sheets:
+        return []
+    row_data = sheets[0].get("data", [{}])[0].get("rowData", [])
+    if not row_data:
+        return []
+    header_cells = row_data[0].get("values", [])
+    return [c.get("formattedValue", "") for c in header_cells]
+
+
+def create_row(sheet_type, values):
+    sheet_name = resolve_sheet(sheet_type)["title"]
+    _api_append_values(f"'{sheet_name}'", values)
 
 
 def update_row(sheet_type, row_number, values):
@@ -332,6 +367,39 @@ def api_search():
         matched = [r for r in matched if not r["is_green"] and not r["is_red"]]
 
     return jsonify({"headers": headers, "rows": matched})
+
+
+@app.route("/api/headers", methods=["POST"])
+@login_required
+def api_headers():
+    data = request.get_json(force=True)
+    sheet_type = data.get("sheet_type")
+    if sheet_type not in SHEET_NAMES:
+        return jsonify({"error": "סוג גיליון לא תקין"}), 400
+    try:
+        headers = fetch_headers(sheet_type)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"headers": headers})
+
+
+@app.route("/api/create_row", methods=["POST"])
+@login_required
+def api_create_row():
+    data = request.get_json(force=True)
+    sheet_type = data.get("sheet_type")
+    values = data.get("values")
+
+    if sheet_type not in SHEET_NAMES:
+        return jsonify({"error": "סוג גיליון לא תקין"}), 400
+    if not isinstance(values, list):
+        return jsonify({"error": "נתונים חסרים"}), 400
+
+    try:
+        create_row(sheet_type, values)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True})
 
 
 @app.route("/api/update", methods=["POST"])
