@@ -55,6 +55,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     },
   };
   const H_DATE = "תאריך";
+  const H_DATE_SENT_TO_INSURER = "תאריך שנשלח לחברת הביטוח";
   const OTHER_VALUE = "__other__";
 
   const SEARCH_LABELS = {
@@ -401,9 +402,11 @@ Line: ${e.lineno}:${e.colno}</div>`
     const statusIdx = headers.indexOf(H_STATUS);
     const lastUpdateIdx = headers.indexOf(H_LAST_UPDATE);
     const dateIdx = headers.indexOf(H_DATE);
+    const dateSentIdx = headers.indexOf(H_DATE_SENT_TO_INSURER);
     if (statusIdx !== -1) blankValues[statusIdx] = `${todayStr()}-נשלחו מסמכים`;
     if (lastUpdateIdx !== -1) blankValues[lastUpdateIdx] = todayStr();
     if (dateIdx !== -1) blankValues[dateIdx] = todayStr();
+    if (dateSentIdx !== -1) blankValues[dateSentIdx] = todayStr();
 
     const blankRow = { row_number: null, values: blankValues, is_green: false, is_red: false };
 
