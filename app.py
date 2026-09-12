@@ -71,18 +71,6 @@ def _api_put_values(range_, values):
         raise RuntimeError(f"שגיאה בשמירה לגוגל שיטס: {resp.status_code} {resp.text[:300]}")
 
 
-def _api_append_values(range_, values):
-    http = get_http()
-    url = f"{SHEETS_API_BASE}/{SPREADSHEET_ID}/values/{quote(range_, safe='')}:append"
-    resp = http.post(
-        url,
-        params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
-        json={"values": [values]},
-    )
-    if not resp.ok:
-        raise RuntimeError(f"שגיאה ביצירת שורה בגוגל שיטס: {resp.status_code} {resp.text[:300]}")
-
-
 def _api_batch_update(requests_body):
     http = get_http()
     resp = http.post(f"{SHEETS_API_BASE}/{SPREADSHEET_ID}:batchUpdate", json={"requests": requests_body})
@@ -225,8 +213,12 @@ def fetch_headers(sheet_type):
 
 
 def create_row(sheet_type, values):
-    sheet_name = resolve_sheet(sheet_type)["title"]
-    _api_append_values(f"'{sheet_name}'", values)
+    """Writes the new row into the first fully-empty row right after the
+    existing data, instead of relying on the API's automatic 'append'
+    detection (which can be unreliable)."""
+    headers, rows = fetch_sheet(sheet_type)
+    next_row_number = (rows[-1]["row_number"] + 1) if rows else 2
+    update_row(sheet_type, next_row_number, values)
 
 
 def update_row(sheet_type, row_number, values):
