@@ -24,18 +24,37 @@ Line: ${e.lineno}:${e.colno}</div>`
     ],
     detail: ["הופק"],
   };
-  const COMPANY_OPTIONS = [
-    "הראל",
-    "ילין לפידות",
-    "מיטב",
-    "מגדל",
-    "כלל",
-    "הפניקס",
-    "אלטשולר שחם",
-    "אנליסט",
-    "הכשרה",
-  ];
+  const COMPANY_OPTIONS_BY_TYPE = {
+    pension: ["הראל", "ילין לפידות", "מיטב", "מגדל", "כלל", "הפניקס", "אלטשולר שחם", "אנליסט", "הכשרה"],
+    detail: ["הראל", "מגדל", "כלל", "הפניקס", "הכשרה"],
+  };
   const COMPANY_OTHER_VALUE = "__other_company__";
+  const PRODUCT_CONFIG = {
+    pension: {
+      options: [
+        "הצטרפות לקרן השתלמות",
+        "הצטרפות לקרן השתלמות עם ניוד",
+        "הצטרפות לקרן פנסיה",
+        "הצטרפות לקרן פנסיה עם ניוד",
+        "הצטרפות לקופת גמל",
+        "הצטרפות לקופת גמל עם ניוד",
+        "הצטרפות לקופת גמל להשקעה",
+        "הצטרפות לקופת גמל להשקעה עם ניוד",
+      ],
+      other: false,
+    },
+    detail: {
+      options: [
+        "הצעה לביטוח חיים",
+        "הצעה לביטוח בריאות",
+        "הצעה לביטוח בריאות ומחלות קשות",
+        "הצעה לביטוח חיים משועבד",
+        "הצעה לביטוח מחלות קשות",
+      ],
+      other: true,
+    },
+  };
+  const H_DATE = "תאריך";
   const OTHER_VALUE = "__other__";
 
   const SEARCH_LABELS = {
@@ -71,6 +90,8 @@ Line: ${e.lineno}:${e.colno}</div>`
   const modalFooter = document.querySelector(".modal-footer");
   const modalClose = document.getElementById("modal-close");
   const saveRowBtn = document.getElementById("save-row");
+  const modalTitleEl = document.querySelector(".modal-header h3");
+  const btnCreateRow = document.getElementById("btn-create-row");
   const toast = document.getElementById("toast");
 
   let toastTimer = null;
@@ -79,6 +100,8 @@ Line: ${e.lineno}:${e.colno}</div>`
   let markRedBtn = null;
   let deleteRowBtn = null;
   let deleteConfirmPending = false;
+  let isCreating = false;
+  let createModalHeaders = [];
 
   function showToast(msg, isError) {
     toast.textContent = msg;
@@ -100,9 +123,13 @@ Line: ${e.lineno}:${e.colno}</div>`
     return (row.values[idx] || "").trim();
   }
 
-  companySearchSelect.innerHTML =
-    `<option value="">בחר חברה…</option>` +
-    COMPANY_OPTIONS.map((opt) => `<option value="${opt}">${opt}</option>`).join("");
+  function populateCompanySearchSelect() {
+    const options = COMPANY_OPTIONS_BY_TYPE[state.sheetType] || [];
+    companySearchSelect.innerHTML =
+      `<option value="">בחר חברה…</option>` +
+      options.map((opt) => `<option value="${opt}">${opt}</option>`).join("");
+  }
+  populateCompanySearchSelect();
 
   searchByGroup.addEventListener("click", (e) => {
     const btn = e.target.closest(".segment");
@@ -137,6 +164,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     [...sheetTypeGroup.children].forEach((c) => c.classList.remove("active"));
     btn.classList.add("active");
     state.sheetType = btn.dataset.value;
+    populateCompanySearchSelect();
   });
 
   btnUpdate.addEventListener("click", () => runSearch("update"));
@@ -273,7 +301,10 @@ Line: ${e.lineno}:${e.colno}</div>`
   function openModal(row) {
     modalBody.innerHTML = "";
     activeRow = row;
+    isCreating = false;
     deleteConfirmPending = false;
+    modalTitleEl.textContent = "עריכת שורה";
+    saveRowBtn.textContent = "שמירת שינויים";
 
     // reset footer buttons
     if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
@@ -328,6 +359,73 @@ Line: ${e.lineno}:${e.colno}</div>`
       input.value = row.values[i] || "";
       input.dataset.colIndex = i;
       if (locked) input.disabled = true;
+      field.appendChild(input);
+      modalBody.appendChild(field);
+    });
+
+    modalBackdrop.hidden = false;
+  }
+
+  btnCreateRow.addEventListener("click", async () => {
+    btnCreateRow.disabled = true;
+    try {
+      const res = await fetch("/api/headers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet_type: state.sheetType }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה בטעינת שדות הגיליון");
+      openCreateModal(data.headers);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      btnCreateRow.disabled = false;
+    }
+  });
+
+  function openCreateModal(headers) {
+    modalBody.innerHTML = "";
+    activeRow = null;
+    isCreating = true;
+    deleteConfirmPending = false;
+    modalTitleEl.textContent = "שורה חדשה";
+    saveRowBtn.textContent = "יצירת שורה";
+    createModalHeaders = headers;
+
+    if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
+    if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
+    if (deleteRowBtn) { deleteRowBtn.remove(); deleteRowBtn = null; }
+
+    const blankValues = new Array(headers.length).fill("");
+    const statusIdx = headers.indexOf(H_STATUS);
+    const lastUpdateIdx = headers.indexOf(H_LAST_UPDATE);
+    const dateIdx = headers.indexOf(H_DATE);
+    if (statusIdx !== -1) blankValues[statusIdx] = `${todayStr()}-נשלחו מסמכים`;
+    if (lastUpdateIdx !== -1) blankValues[lastUpdateIdx] = todayStr();
+    if (dateIdx !== -1) blankValues[dateIdx] = todayStr();
+
+    const blankRow = { row_number: null, values: blankValues, is_green: false, is_red: false };
+
+    const companyIdx = headers.indexOf(H_COMPANY);
+    const transferCompanyIdx = headers.indexOf(H_TRANSFER_COMPANY);
+    const productIdx = headers.indexOf(H_PRODUCT);
+
+    headers.forEach((header, i) => {
+      if (i === companyIdx) { renderCompanyField(header, blankRow, i); return; }
+      if (i === transferCompanyIdx) { renderTransferCompanyField(header, blankRow, i); return; }
+      if (i === productIdx) { renderProductField(header, blankRow, i); return; }
+
+      const field = document.createElement("div");
+      field.className = "modal-field";
+      const label = document.createElement("label");
+      label.textContent = header || `עמודה ${i + 1}`;
+      field.appendChild(label);
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = blankRow.values[i] || "";
+      input.dataset.colIndex = i;
       field.appendChild(input);
       modalBody.appendChild(field);
     });
@@ -411,7 +509,8 @@ Line: ${e.lineno}:${e.colno}</div>`
     field.appendChild(label);
 
     const currentValue = (row.values[i] || "").trim();
-    const isKnown = COMPANY_OPTIONS.includes(currentValue);
+    const options = COMPANY_OPTIONS_BY_TYPE[state.sheetType] || [];
+    const isKnown = options.includes(currentValue);
 
     const select = document.createElement("select");
     select.dataset.companySelect = "1";
@@ -423,8 +522,8 @@ Line: ${e.lineno}:${e.colno}</div>`
     select.style.fontFamily = "inherit";
     select.style.fontSize = "14px";
 
-    let optionsHtml = "";
-    COMPANY_OPTIONS.forEach((opt) => {
+    let optionsHtml = currentValue ? "" : `<option value="">בחר חברה…</option>`;
+    options.forEach((opt) => {
       optionsHtml += `<option value="${opt}"${opt === currentValue ? " selected" : ""}>${opt}</option>`;
     });
     optionsHtml += `<option value="${COMPANY_OTHER_VALUE}"${!isKnown && currentValue ? " selected" : ""}>אחר…</option>`;
@@ -449,9 +548,106 @@ Line: ${e.lineno}:${e.colno}</div>`
     modalBody.appendChild(field);
   }
 
+  function renderTransferCompanyField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const currentValue = (row.values[i] || "").trim();
+    const options = COMPANY_OPTIONS_BY_TYPE[state.sheetType] || [];
+    const isKnown = options.includes(currentValue);
+
+    const select = document.createElement("select");
+    select.dataset.transferCompanySelect = "1";
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+
+    let optionsHtml = `<option value="">לא רלוונטי / ללא ניוד</option>`;
+    options.forEach((opt) => {
+      optionsHtml += `<option value="${opt}"${opt === currentValue ? " selected" : ""}>${opt}</option>`;
+    });
+    optionsHtml += `<option value="${COMPANY_OTHER_VALUE}"${!isKnown && currentValue ? " selected" : ""}>אחר…</option>`;
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    const otherInput = document.createElement("input");
+    otherInput.type = "text";
+    otherInput.placeholder = "שם חברה מעבירה";
+    otherInput.dataset.transferCompanyOtherInput = "1";
+    otherInput.style.marginTop = "8px";
+    otherInput.value = !isKnown ? currentValue : "";
+    otherInput.hidden = select.value !== COMPANY_OTHER_VALUE;
+    field.appendChild(otherInput);
+
+    select.addEventListener("change", () => {
+      otherInput.hidden = select.value !== COMPANY_OTHER_VALUE;
+      if (otherInput.hidden) otherInput.value = "";
+    });
+
+    modalBody.appendChild(field);
+  }
+
+  function renderProductField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const config = PRODUCT_CONFIG[state.sheetType] || { options: [], other: false };
+    const currentValue = (row.values[i] || "").trim();
+
+    const select = document.createElement("select");
+    select.dataset.productSelect = "1";
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+
+    let optionsHtml = currentValue ? "" : `<option value="">בחר סוג הצעה / מוצר…</option>`;
+    config.options.forEach((opt) => {
+      optionsHtml += `<option value="${opt}"${opt === currentValue ? " selected" : ""}>${opt}</option>`;
+    });
+    const isKnownProduct = config.options.includes(currentValue);
+    if (config.other) {
+      optionsHtml += `<option value="${OTHER_VALUE}"${!isKnownProduct && currentValue ? " selected" : ""}>אחר…</option>`;
+    }
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    if (config.other) {
+      const otherInput = document.createElement("input");
+      otherInput.type = "text";
+      otherInput.placeholder = "כתוב כאן";
+      otherInput.dataset.productOtherInput = "1";
+      otherInput.style.marginTop = "8px";
+      otherInput.value = !isKnownProduct ? currentValue : "";
+      otherInput.hidden = select.value !== OTHER_VALUE;
+      field.appendChild(otherInput);
+
+      select.addEventListener("change", () => {
+        otherInput.hidden = select.value !== OTHER_VALUE;
+        if (otherInput.hidden) otherInput.value = "";
+      });
+    }
+
+    modalBody.appendChild(field);
+  }
+
   function closeModal() {
     modalBackdrop.hidden = true;
     activeRow = null;
+    isCreating = false;
     deleteConfirmPending = false;
     if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
     if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
@@ -544,7 +740,86 @@ Line: ${e.lineno}:${e.colno}</div>`
     }
   }
 
+  async function saveNewRow() {
+    const headers = createModalHeaders;
+    const values = new Array(headers.length).fill("");
+
+    modalBody.querySelectorAll("[data-col-index]").forEach((el) => {
+      values[Number(el.dataset.colIndex)] = el.value;
+    });
+
+    const companyIdx = headers.indexOf(H_COMPANY);
+    const companySelect = modalBody.querySelector("select[data-company-select]");
+    if (companyIdx !== -1 && companySelect) {
+      let v = companySelect.value;
+      if (!v) {
+        showToast("יש לבחור חברה", true);
+        return;
+      }
+      if (v === COMPANY_OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-company-other-input]");
+        v = otherInput ? otherInput.value.trim() : "";
+        if (!v) {
+          showToast("יש לכתוב את שם החברה בשדה 'אחר'", true);
+          return;
+        }
+      }
+      values[companyIdx] = v;
+    }
+
+    const transferCompanyIdx = headers.indexOf(H_TRANSFER_COMPANY);
+    const transferSelect = modalBody.querySelector("select[data-transfer-company-select]");
+    if (transferCompanyIdx !== -1 && transferSelect) {
+      let v = transferSelect.value;
+      if (v === COMPANY_OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-transfer-company-other-input]");
+        v = otherInput ? otherInput.value.trim() : "";
+      }
+      values[transferCompanyIdx] = v;
+    }
+
+    const productIdx = headers.indexOf(H_PRODUCT);
+    const productSelect = modalBody.querySelector("select[data-product-select]");
+    if (productIdx !== -1 && productSelect) {
+      let v = productSelect.value;
+      if (!v) {
+        showToast("יש לבחור סוג הצעה / מוצר", true);
+        return;
+      }
+      if (v === OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-product-other-input]");
+        v = otherInput ? otherInput.value.trim() : "";
+        if (!v) {
+          showToast("יש לכתוב בשדה 'אחר'", true);
+          return;
+        }
+      }
+      values[productIdx] = v;
+    }
+
+    saveRowBtn.disabled = true;
+    saveRowBtn.textContent = "יוצר שורה…";
+    try {
+      const res = await fetch("/api/create_row", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet_type: state.sheetType, values }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה ביצירת השורה");
+
+      showToast("השורה נוצרה בהצלחה");
+      closeModal();
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      saveRowBtn.disabled = false;
+      saveRowBtn.textContent = isCreating ? "יצירת שורה" : "שמירת שינויים";
+    }
+  }
+
   saveRowBtn.addEventListener("click", async () => {
+    if (isCreating) return saveNewRow();
     if (!activeRow) return;
     const headers = state.headers;
     const values = new Array(headers.length).fill("");
