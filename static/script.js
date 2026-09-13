@@ -28,3 +28,912 @@ Line: ${e.lineno}:${e.colno}</div>`
     pension: ["הראל", "ילין לפידות", "מיטב", "מגדל", "כלל", "הפניקס", "אלטשולר שחם", "אנליסט", "הכשרה"],
     detail: ["הראל", "מגדל", "כלל", "הפניקס", "הכשרה"],
   };
+  const COMPANY_OTHER_VALUE = "__other_company__";
+  const PRODUCT_CONFIG = {
+    pension: {
+      options: [
+        "הצטרפות לקרן השתלמות",
+        "הצטרפות לקרן השתלמות עם ניוד",
+        "הצטרפות לקרן פנסיה",
+        "הצטרפות לקרן פנסיה עם ניוד",
+        "הצטרפות לקופת גמל",
+        "הצטרפות לקופת גמל עם ניוד",
+        "הצטרפות לקופת גמל להשקעה",
+        "הצטרפות לקופת גמל להשקעה עם ניוד",
+      ],
+      other: false,
+    },
+    detail: {
+      options: [
+        "הצעה לביטוח חיים",
+        "הצעה לביטוח בריאות",
+        "הצעה לביטוח בריאות ומחלות קשות",
+        "הצעה לביטוח חיים משועבד",
+        "הצעה לביטוח מחלות קשות",
+      ],
+      other: true,
+    },
+  };
+  const H_DATE = "תאריך";
+  const H_DATE_SENT_TO_INSURER = "תאריך שנשלח לחברת הביטוח";
+  const OTHER_VALUE = "__other__";
+
+  const SEARCH_LABELS = {
+    tz: { label: "תעודת זהות לקוח", placeholder: "לדוגמה: 123456789", numeric: true },
+    name: { label: "שם לקוח", placeholder: "לדוגמה: ישראל ישראלי", numeric: false },
+    company: { label: "שם חברה", placeholder: "לדוגמה: הראל", numeric: false },
+  };
+
+  const state = {
+    sheetType: "pension",
+    searchBy: "tz",
+    mode: null,
+    headers: [],
+    rows: [],
+  };
+
+  const tzInput = document.getElementById("tz-input");
+  const companySearchSelect = document.getElementById("company-search-select");
+  const searchLabel = document.getElementById("search-label");
+  const searchByGroup = document.getElementById("search-by-group");
+  const sheetTypeGroup = document.getElementById("sheet-type-group");
+  const btnUpdate = document.getElementById("btn-update");
+  const btnView = document.getElementById("btn-view");
+  const resultsPanel = document.getElementById("results-panel");
+  const resultsTitle = document.getElementById("results-title");
+  const resultsCount = document.getElementById("results-count");
+  const resultsList = document.getElementById("results-list");
+  const emptyState = document.getElementById("empty-state");
+  const emptyText = document.getElementById("empty-text");
+  const loading = document.getElementById("loading");
+  const modalBackdrop = document.getElementById("edit-backdrop");
+  const modalBody = document.getElementById("modal-body");
+  const modalFooter = document.querySelector(".modal-footer");
+  const modalClose = document.getElementById("modal-close");
+  const saveRowBtn = document.getElementById("save-row");
+  const modalTitleEl = document.querySelector(".modal-header h3");
+  const btnCreateRow = document.getElementById("btn-create-row");
+  const toast = document.getElementById("toast");
+
+  let toastTimer = null;
+  let activeRow = null; // the row currently open in the modal
+  let markGreenBtn = null;
+  let markRedBtn = null;
+  let deleteRowBtn = null;
+  let deleteConfirmPending = false;
+  let isCreating = false;
+  let createModalHeaders = [];
+
+  function showToast(msg, isError) {
+    toast.textContent = msg;
+    toast.classList.toggle("error", !!isError);
+    toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 3200);
+  }
+
+  function todayStr() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+  }
+
+  function getVal(headers, row, headerName) {
+    const idx = headers.indexOf(headerName);
+    if (idx === -1) return "";
+    return (row.values[idx] || "").trim();
+  }
+
+  function populateCompanySearchSelect() {
+    const options = COMPANY_OPTIONS_BY_TYPE[state.sheetType] || [];
+    companySearchSelect.innerHTML =
+      `<option value="">בחר חברה…</option>` +
+      options.map((opt) => `<option value="${opt}">${opt}</option>`).join("");
+  }
+  populateCompanySearchSelect();
+
+  searchByGroup.addEventListener("click", (e) => {
+    const btn = e.target.closest(".segment");
+    if (!btn) return;
+    [...searchByGroup.children].forEach((c) => c.classList.remove("active"));
+    btn.classList.add("active");
+    state.searchBy = btn.dataset.value;
+    const cfg = SEARCH_LABELS[state.searchBy];
+    searchLabel.textContent = cfg.label;
+    if (state.searchBy === "company") {
+      tzInput.hidden = true;
+      companySearchSelect.hidden = false;
+      companySearchSelect.value = "";
+    } else {
+      companySearchSelect.hidden = true;
+      tzInput.hidden = false;
+      tzInput.placeholder = cfg.placeholder;
+      if (cfg.numeric) {
+        tzInput.inputMode = "numeric";
+        tzInput.maxLength = 9;
+      } else {
+        tzInput.inputMode = "text";
+        tzInput.removeAttribute("maxlength");
+      }
+      tzInput.value = "";
+    }
+  });
+
+  sheetTypeGroup.addEventListener("click", (e) => {
+    const btn = e.target.closest(".segment");
+    if (!btn) return;
+    [...sheetTypeGroup.children].forEach((c) => c.classList.remove("active"));
+    btn.classList.add("active");
+    state.sheetType = btn.dataset.value;
+    populateCompanySearchSelect();
+  });
+
+  btnUpdate.addEventListener("click", () => runSearch("update"));
+  btnView.addEventListener("click", () => runSearch("view"));
+
+  function setLoading(isLoading) {
+    loading.hidden = !isLoading;
+    if (isLoading) {
+      resultsPanel.hidden = true;
+      emptyState.hidden = true;
+    }
+  }
+
+  async function runSearch(mode) {
+    const query = state.searchBy === "company" ? companySearchSelect.value.trim() : tzInput.value.trim();
+    if (!query) {
+      showToast(`יש לבחור/להזין ${SEARCH_LABELS[state.searchBy].label}`, true);
+      if (state.searchBy !== "company") tzInput.focus();
+      return;
+    }
+    state.mode = mode;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_type: state.sheetType,
+          search_by: state.searchBy,
+          query,
+          mode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "שגיאה בטעינת הנתונים");
+      }
+      state.headers = data.headers;
+      state.rows = data.rows;
+      renderResults();
+    } catch (err) {
+      showToast(err.message, true);
+      emptyText.textContent = "אירעה שגיאה. נסה שוב.";
+      emptyState.hidden = false;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderResults() {
+    const { headers, rows, mode } = state;
+
+    if (!rows.length) {
+      resultsPanel.hidden = true;
+      emptyText.textContent =
+        mode === "update"
+          ? "לא נמצאו שורות הממתינות לעדכון"
+          : "לא נמצאו שורות";
+      emptyState.hidden = false;
+      return;
+    }
+
+    emptyState.hidden = true;
+    resultsPanel.hidden = false;
+    resultsTitle.textContent = mode === "update" ? "שורות לעדכון" : "כל השורות";
+    resultsCount.textContent = `${rows.length} שורות`;
+
+    resultsList.innerHTML = "";
+    rows.forEach((row) => {
+      resultsList.appendChild(renderRowCard(row, headers));
+    });
+  }
+
+  function renderRowCard(row, headers) {
+    const card = document.createElement("div");
+    card.className = "row-card" + (row.is_green ? " is-green" : row.is_red ? " is-red" : "");
+
+    const ribbon = document.createElement("div");
+    ribbon.className = "ribbon";
+    card.appendChild(ribbon);
+
+    const body = document.createElement("div");
+    body.className = "row-card-body";
+
+    const statusLabel = row.is_green ? "דווח" : row.is_red ? "לא רלוונטי" : "ממתין";
+    const top = document.createElement("div");
+    top.className = "row-card-top";
+    top.innerHTML = `
+      <span class="row-number">שורה ${row.row_number}</span>
+      <span class="status-badge">${statusLabel}</span>
+    `;
+    body.appendChild(top);
+
+    const fields = document.createElement("div");
+    fields.className = "row-fields";
+
+    const clientName = getVal(headers, row, H_CLIENT_NAME);
+    const company = getVal(headers, row, H_COMPANY);
+    const product = getVal(headers, row, H_PRODUCT);
+    const transferCompany = getVal(headers, row, H_TRANSFER_COMPANY);
+
+    const addField = (label, value) => {
+      const l = document.createElement("span");
+      l.className = "row-field-label";
+      l.textContent = label;
+      const v = document.createElement("span");
+      v.className = "row-field-value";
+      v.textContent = value;
+      fields.appendChild(l);
+      fields.appendChild(v);
+    };
+
+    if (state.searchBy !== "name" && clientName) addField(H_CLIENT_NAME, clientName);
+    if (company) addField(H_COMPANY, company);
+    if (product) addField(H_PRODUCT, product);
+    if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
+
+    body.appendChild(fields);
+
+    const footer = document.createElement("div");
+    footer.className = "row-card-footer";
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "edit-link";
+    link.textContent = "עריכת שורה >";
+    link.addEventListener("click", () => openModal(row));
+    footer.appendChild(link);
+    body.appendChild(footer);
+
+    card.appendChild(body);
+    return card;
+  }
+
+  function openModal(row) {
+    modalBody.innerHTML = "";
+    activeRow = row;
+    isCreating = false;
+    deleteConfirmPending = false;
+    modalTitleEl.textContent = "עריכת שורה";
+    saveRowBtn.textContent = "שמירת שינויים";
+
+    // reset footer buttons
+    if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
+    if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
+    if (deleteRowBtn) { deleteRowBtn.remove(); deleteRowBtn = null; }
+
+    markGreenBtn = document.createElement("button");
+    markGreenBtn.type = "button";
+    markGreenBtn.className = "action-btn";
+    markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
+    markGreenBtn.addEventListener("click", () => toggleColor(row, "green"));
+    modalFooter.insertBefore(markGreenBtn, saveRowBtn);
+
+    markRedBtn = document.createElement("button");
+    markRedBtn.type = "button";
+    markRedBtn.className = "action-btn";
+    markRedBtn.textContent = row.is_red ? "בטל סימון אדום (לא רלוונטי)" : "סמן שורה כלא רלוונטי (אדום)";
+    markRedBtn.addEventListener("click", () => toggleColor(row, "red"));
+    modalFooter.insertBefore(markRedBtn, saveRowBtn);
+
+    deleteRowBtn = document.createElement("button");
+    deleteRowBtn.type = "button";
+    deleteRowBtn.className = "action-btn danger";
+    deleteRowBtn.textContent = "מחיקת שורה";
+    deleteRowBtn.addEventListener("click", () => handleDeleteClick(row));
+    modalFooter.insertBefore(deleteRowBtn, saveRowBtn);
+
+    const headers = state.headers;
+    const statusIdx = headers.indexOf(H_STATUS);
+    const companyIdx = headers.indexOf(H_COMPANY);
+    const transferCompanyIdx = headers.indexOf(H_TRANSFER_COMPANY);
+    const productIdx = headers.indexOf(H_PRODUCT);
+
+    headers.forEach((header, i) => {
+      if (i === statusIdx) {
+        renderStatusField(header, row, i);
+        return;
+      }
+      if (i === companyIdx) {
+        renderCompanyField(header, row, i);
+        return;
+      }
+      if (i === transferCompanyIdx) {
+        renderTransferCompanyField(header, row, i);
+        return;
+      }
+      if (i === productIdx) {
+        renderProductField(header, row, i);
+        return;
+      }
+
+      const field = document.createElement("div");
+      field.className = "modal-field";
+      const locked = header === H_ID;
+      if (locked) field.classList.add("locked");
+      const label = document.createElement("label");
+      label.textContent = header || `עמודה ${i + 1}`;
+      field.appendChild(label);
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = row.values[i] || "";
+      input.dataset.colIndex = i;
+      if (locked) input.disabled = true;
+      field.appendChild(input);
+      modalBody.appendChild(field);
+    });
+
+    modalBackdrop.hidden = false;
+  }
+
+  btnCreateRow.addEventListener("click", async () => {
+    btnCreateRow.disabled = true;
+    try {
+      const res = await fetch("/api/headers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet_type: state.sheetType }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה בטעינת שדות הגיליון");
+      openCreateModal(data.headers);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      btnCreateRow.disabled = false;
+    }
+  });
+
+  function openCreateModal(headers) {
+    modalBody.innerHTML = "";
+    activeRow = null;
+    isCreating = true;
+    deleteConfirmPending = false;
+    modalTitleEl.textContent = "שורה חדשה";
+    saveRowBtn.textContent = "יצירת שורה";
+    createModalHeaders = headers;
+
+    if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
+    if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
+    if (deleteRowBtn) { deleteRowBtn.remove(); deleteRowBtn = null; }
+
+    const blankValues = new Array(headers.length).fill("");
+    const statusIdx = headers.indexOf(H_STATUS);
+    const lastUpdateIdx = headers.indexOf(H_LAST_UPDATE);
+    const dateIdx = headers.indexOf(H_DATE);
+    const dateSentIdx = headers.indexOf(H_DATE_SENT_TO_INSURER);
+    if (statusIdx !== -1) blankValues[statusIdx] = `${todayStr()}-נשלחו מסמכים`;
+    if (lastUpdateIdx !== -1) blankValues[lastUpdateIdx] = todayStr();
+    if (dateIdx !== -1) blankValues[dateIdx] = todayStr();
+    if (dateSentIdx !== -1) blankValues[dateSentIdx] = todayStr();
+
+    const blankRow = { row_number: null, values: blankValues, is_green: false, is_red: false };
+
+    const companyIdx = headers.indexOf(H_COMPANY);
+    const transferCompanyIdx = headers.indexOf(H_TRANSFER_COMPANY);
+    const productIdx = headers.indexOf(H_PRODUCT);
+
+    headers.forEach((header, i) => {
+      if (i === companyIdx) { renderCompanyField(header, blankRow, i); return; }
+      if (i === transferCompanyIdx) { renderTransferCompanyField(header, blankRow, i); return; }
+      if (i === productIdx) { renderProductField(header, blankRow, i); return; }
+
+      const field = document.createElement("div");
+      field.className = "modal-field";
+      const label = document.createElement("label");
+      label.textContent = header || `עמודה ${i + 1}`;
+      field.appendChild(label);
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = blankRow.values[i] || "";
+      input.dataset.colIndex = i;
+      field.appendChild(input);
+      modalBody.appendChild(field);
+    });
+
+    modalBackdrop.hidden = false;
+  }
+
+  function renderStatusField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const historyBox = document.createElement("textarea");
+    historyBox.value = row.values[i] || "";
+    historyBox.rows = 4;
+    historyBox.dataset.colIndex = i;
+    historyBox.style.width = "100%";
+    historyBox.style.padding = "10px 12px";
+    historyBox.style.borderRadius = "8px";
+    historyBox.style.border = "1.5px solid var(--line)";
+    historyBox.style.background = "var(--paper)";
+    historyBox.style.color = "var(--ink)";
+    historyBox.style.fontFamily = "inherit";
+    historyBox.style.fontSize = "13px";
+    field.appendChild(historyBox);
+
+    const editHint = document.createElement("p");
+    editHint.textContent = "אפשר לתקן כאן ישירות את הטקסט הקיים.";
+    editHint.style.fontSize = "11px";
+    editHint.style.color = "var(--ink-soft)";
+    editHint.style.margin = "4px 0 0";
+    field.appendChild(editHint);
+
+    const hint = document.createElement("label");
+    hint.textContent = "הוספת עדכון סטטוס חדש (יתווסף עם תאריך היום מתחת להיסטוריה)";
+    hint.style.marginTop = "8px";
+    field.appendChild(hint);
+
+    const select = document.createElement("select");
+    select.dataset.statusSelect = "1";
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+
+    const options = STATUS_OPTIONS[state.sheetType] || [];
+    let optionsHtml = `<option value="">בחר עדכון…</option>`;
+    options.forEach((opt) => {
+      optionsHtml += `<option value="${opt}">${opt}</option>`;
+    });
+    optionsHtml += `<option value="${OTHER_VALUE}">אחר…</option>`;
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    const otherInput = document.createElement("input");
+    otherInput.type = "text";
+    otherInput.placeholder = "כתוב כאן את העדכון";
+    otherInput.dataset.statusOtherInput = "1";
+    otherInput.style.marginTop = "8px";
+    otherInput.hidden = true;
+    field.appendChild(otherInput);
+
+    select.addEventListener("change", () => {
+      otherInput.hidden = select.value !== OTHER_VALUE;
+      if (otherInput.hidden) otherInput.value = "";
+    });
+
+    modalBody.appendChild(field);
+  }
+
+  function renderCompanyField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const currentValue = (row.values[i] || "").trim();
+    const options = COMPANY_OPTIONS_BY_TYPE[state.sheetType] || [];
+    const isKnown = options.includes(currentValue);
+
+    const select = document.createElement("select");
+    select.dataset.companySelect = "1";
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+
+    let optionsHtml = currentValue ? "" : `<option value="">בחר חברה…</option>`;
+    options.forEach((opt) => {
+      optionsHtml += `<option value="${opt}"${opt === currentValue ? " selected" : ""}>${opt}</option>`;
+    });
+    optionsHtml += `<option value="${COMPANY_OTHER_VALUE}"${!isKnown && currentValue ? " selected" : ""}>אחר…</option>`;
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    const otherInput = document.createElement("input");
+    otherInput.type = "text";
+    otherInput.placeholder = "שם חברה";
+    otherInput.dataset.companyOtherInput = "1";
+    otherInput.style.marginTop = "8px";
+    otherInput.value = !isKnown ? currentValue : "";
+    otherInput.hidden = isKnown || !currentValue ? true : false;
+    if (select.value === COMPANY_OTHER_VALUE) otherInput.hidden = false;
+    field.appendChild(otherInput);
+
+    select.addEventListener("change", () => {
+      otherInput.hidden = select.value !== COMPANY_OTHER_VALUE;
+      if (otherInput.hidden) otherInput.value = "";
+    });
+
+    modalBody.appendChild(field);
+  }
+
+  function renderTransferCompanyField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const currentValue = (row.values[i] || "").trim();
+    const options = COMPANY_OPTIONS_BY_TYPE[state.sheetType] || [];
+    const isKnown = options.includes(currentValue);
+
+    const select = document.createElement("select");
+    select.dataset.transferCompanySelect = "1";
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+
+    let optionsHtml = `<option value="">לא רלוונטי / ללא ניוד</option>`;
+    options.forEach((opt) => {
+      optionsHtml += `<option value="${opt}"${opt === currentValue ? " selected" : ""}>${opt}</option>`;
+    });
+    optionsHtml += `<option value="${COMPANY_OTHER_VALUE}"${!isKnown && currentValue ? " selected" : ""}>אחר…</option>`;
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    const otherInput = document.createElement("input");
+    otherInput.type = "text";
+    otherInput.placeholder = "שם חברה מעבירה";
+    otherInput.dataset.transferCompanyOtherInput = "1";
+    otherInput.style.marginTop = "8px";
+    otherInput.value = !isKnown ? currentValue : "";
+    otherInput.hidden = select.value !== COMPANY_OTHER_VALUE;
+    field.appendChild(otherInput);
+
+    select.addEventListener("change", () => {
+      otherInput.hidden = select.value !== COMPANY_OTHER_VALUE;
+      if (otherInput.hidden) otherInput.value = "";
+    });
+
+    modalBody.appendChild(field);
+  }
+
+  function renderProductField(header, row, i) {
+    const field = document.createElement("div");
+    field.className = "modal-field";
+    const label = document.createElement("label");
+    label.textContent = header;
+    field.appendChild(label);
+
+    const config = PRODUCT_CONFIG[state.sheetType] || { options: [], other: false };
+    const currentValue = (row.values[i] || "").trim();
+
+    const select = document.createElement("select");
+    select.dataset.productSelect = "1";
+    select.style.width = "100%";
+    select.style.padding = "10px 12px";
+    select.style.borderRadius = "8px";
+    select.style.border = "1.5px solid var(--line)";
+    select.style.background = "var(--paper)";
+    select.style.fontFamily = "inherit";
+    select.style.fontSize = "14px";
+
+    let optionsHtml = currentValue ? "" : `<option value="">בחר סוג הצעה / מוצר…</option>`;
+    config.options.forEach((opt) => {
+      optionsHtml += `<option value="${opt}"${opt === currentValue ? " selected" : ""}>${opt}</option>`;
+    });
+    const isKnownProduct = config.options.includes(currentValue);
+    if (config.other) {
+      optionsHtml += `<option value="${OTHER_VALUE}"${!isKnownProduct && currentValue ? " selected" : ""}>אחר…</option>`;
+    }
+    select.innerHTML = optionsHtml;
+    field.appendChild(select);
+
+    if (config.other) {
+      const otherInput = document.createElement("input");
+      otherInput.type = "text";
+      otherInput.placeholder = "כתוב כאן";
+      otherInput.dataset.productOtherInput = "1";
+      otherInput.style.marginTop = "8px";
+      otherInput.value = !isKnownProduct ? currentValue : "";
+      otherInput.hidden = select.value !== OTHER_VALUE;
+      field.appendChild(otherInput);
+
+      select.addEventListener("change", () => {
+        otherInput.hidden = select.value !== OTHER_VALUE;
+        if (otherInput.hidden) otherInput.value = "";
+      });
+    }
+
+    modalBody.appendChild(field);
+  }
+
+  function closeModal() {
+    modalBackdrop.hidden = true;
+    activeRow = null;
+    isCreating = false;
+    deleteConfirmPending = false;
+    if (markGreenBtn) { markGreenBtn.remove(); markGreenBtn = null; }
+    if (markRedBtn) { markRedBtn.remove(); markRedBtn = null; }
+    if (deleteRowBtn) { deleteRowBtn.remove(); deleteRowBtn = null; }
+  }
+
+  modalClose.addEventListener("click", closeModal);
+  modalBackdrop.addEventListener("click", (e) => {
+    if (e.target === modalBackdrop) closeModal();
+  });
+
+  async function toggleColor(row, colorName) {
+    const isActive = colorName === "green" ? row.is_green : row.is_red;
+    const targetColor = isActive ? "none" : colorName;
+    markGreenBtn.disabled = true;
+    markRedBtn.disabled = true;
+    try {
+      const res = await fetch("/api/mark_row", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_type: state.sheetType,
+          row_number: row.row_number,
+          num_cols: state.headers.length,
+          color: targetColor,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה בסימון השורה");
+
+      row.is_green = targetColor === "green";
+      row.is_red = targetColor === "red";
+      markGreenBtn.textContent = row.is_green ? "בטל סימון ירוק (דווח)" : "סמן שורה כדווח (ירוק)";
+      markRedBtn.textContent = row.is_red ? "בטל סימון אדום (לא רלוונטי)" : "סמן שורה כלא רלוונטי (אדום)";
+
+      showToast(
+        targetColor === "none"
+          ? "הסימון הוסר"
+          : targetColor === "green"
+          ? "השורה סומנה כדווח"
+          : "השורה סומנה כלא רלוונטי"
+      );
+      renderResults();
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      markGreenBtn.disabled = false;
+      markRedBtn.disabled = false;
+    }
+  }
+
+  function handleDeleteClick(row) {
+    if (!deleteConfirmPending) {
+      deleteConfirmPending = true;
+      deleteRowBtn.textContent = "לחץ שוב לאישור המחיקה";
+      showToast("לחץ שוב על 'מחיקת שורה' תוך כמה שניות כדי לאשר", true);
+      setTimeout(() => {
+        if (deleteConfirmPending) {
+          deleteConfirmPending = false;
+          if (deleteRowBtn) deleteRowBtn.textContent = "מחיקת שורה";
+        }
+      }, 5000);
+      return;
+    }
+    deleteRow(row);
+  }
+
+  async function deleteRow(row) {
+    deleteRowBtn.disabled = true;
+    try {
+      const res = await fetch("/api/delete_row", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_type: state.sheetType,
+          row_number: row.row_number,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה במחיקת השורה");
+      showToast("השורה נמחקה");
+      closeModal();
+      runSearch(state.mode);
+    } catch (err) {
+      showToast(err.message, true);
+      deleteConfirmPending = false;
+      if (deleteRowBtn) deleteRowBtn.textContent = "מחיקת שורה";
+    } finally {
+      if (deleteRowBtn) deleteRowBtn.disabled = false;
+    }
+  }
+
+  async function saveNewRow() {
+    const headers = createModalHeaders;
+    const values = new Array(headers.length).fill("");
+
+    modalBody.querySelectorAll("[data-col-index]").forEach((el) => {
+      values[Number(el.dataset.colIndex)] = el.value;
+    });
+
+    const companyIdx = headers.indexOf(H_COMPANY);
+    const companySelect = modalBody.querySelector("select[data-company-select]");
+    if (companyIdx !== -1 && companySelect) {
+      let v = companySelect.value;
+      if (!v) {
+        showToast("יש לבחור חברה", true);
+        return;
+      }
+      if (v === COMPANY_OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-company-other-input]");
+        v = otherInput ? otherInput.value.trim() : "";
+        if (!v) {
+          showToast("יש לכתוב את שם החברה בשדה 'אחר'", true);
+          return;
+        }
+      }
+      values[companyIdx] = v;
+    }
+
+    const transferCompanyIdx = headers.indexOf(H_TRANSFER_COMPANY);
+    const transferSelect = modalBody.querySelector("select[data-transfer-company-select]");
+    if (transferCompanyIdx !== -1 && transferSelect) {
+      let v = transferSelect.value;
+      if (v === COMPANY_OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-transfer-company-other-input]");
+        v = otherInput ? otherInput.value.trim() : "";
+      }
+      values[transferCompanyIdx] = v;
+    }
+
+    const productIdx = headers.indexOf(H_PRODUCT);
+    const productSelect = modalBody.querySelector("select[data-product-select]");
+    if (productIdx !== -1 && productSelect) {
+      let v = productSelect.value;
+      if (!v) {
+        showToast("יש לבחור סוג הצעה / מוצר", true);
+        return;
+      }
+      if (v === OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-product-other-input]");
+        v = otherInput ? otherInput.value.trim() : "";
+        if (!v) {
+          showToast("יש לכתוב בשדה 'אחר'", true);
+          return;
+        }
+      }
+      values[productIdx] = v;
+    }
+
+    saveRowBtn.disabled = true;
+    saveRowBtn.textContent = "יוצר שורה…";
+    try {
+      const res = await fetch("/api/create_row", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet_type: state.sheetType, values }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה ביצירת השורה");
+
+      showToast("השורה נוצרה בהצלחה");
+      closeModal();
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      saveRowBtn.disabled = false;
+      saveRowBtn.textContent = isCreating ? "יצירת שורה" : "שמירת שינויים";
+    }
+  }
+
+  saveRowBtn.addEventListener("click", async () => {
+    if (isCreating) return saveNewRow();
+    if (!activeRow) return;
+    const headers = state.headers;
+    const values = new Array(headers.length).fill("");
+
+    modalBody.querySelectorAll("[data-col-index]").forEach((el) => {
+      values[Number(el.dataset.colIndex)] = el.value;
+    });
+
+    const pendingStatusLines = [];
+
+    const statusSelect = modalBody.querySelector("select[data-status-select]");
+    if (statusSelect && statusSelect.value) {
+      let text = statusSelect.value;
+      if (text === OTHER_VALUE) {
+        const otherInput = modalBody.querySelector("input[data-status-other-input]");
+        text = otherInput ? otherInput.value.trim() : "";
+        if (!text) {
+          showToast("יש לכתוב את תוכן העדכון בשדה 'אחר'", true);
+          return;
+        }
+      }
+      pendingStatusLines.push(`${todayStr()}-${text}`);
+    }
+
+    if (pendingStatusLines.length) {
+      const statusIdx = headers.indexOf(H_STATUS);
+      if (statusIdx !== -1) {
+        const existing = values[statusIdx] || "";
+        values[statusIdx] = (existing.trim() ? existing + "\n" : "") + pendingStatusLines.join("\n");
+      }
+    }
+
+    const lastUpdateIdx = headers.indexOf(H_LAST_UPDATE);
+    if (lastUpdateIdx !== -1) {
+      values[lastUpdateIdx] = todayStr();
+    }
+
+    const companyIdx = headers.indexOf(H_COMPANY);
+    const companySelect = modalBody.querySelector("select[data-company-select]");
+    if (companyIdx !== -1 && companySelect) {
+      let companyValue = companySelect.value;
+      if (companyValue === COMPANY_OTHER_VALUE) {
+        const companyOtherInput = modalBody.querySelector("input[data-company-other-input]");
+        companyValue = companyOtherInput ? companyOtherInput.value.trim() : "";
+        if (!companyValue) {
+          showToast("יש לכתוב את שם החברה בשדה 'אחר'", true);
+          return;
+        }
+      }
+      values[companyIdx] = companyValue;
+    }
+
+    const transferCompanyIdx = headers.indexOf(H_TRANSFER_COMPANY);
+    const transferSelect = modalBody.querySelector("select[data-transfer-company-select]");
+    if (transferCompanyIdx !== -1 && transferSelect) {
+      let transferValue = transferSelect.value;
+      if (transferValue === COMPANY_OTHER_VALUE) {
+        const transferOtherInput = modalBody.querySelector("input[data-transfer-company-other-input]");
+        transferValue = transferOtherInput ? transferOtherInput.value.trim() : "";
+      }
+      values[transferCompanyIdx] = transferValue;
+    }
+
+    const productIdx = headers.indexOf(H_PRODUCT);
+    const productSelect = modalBody.querySelector("select[data-product-select]");
+    if (productIdx !== -1 && productSelect) {
+      let productValue = productSelect.value;
+      if (productValue === OTHER_VALUE) {
+        const productOtherInput = modalBody.querySelector("input[data-product-other-input]");
+        productValue = productOtherInput ? productOtherInput.value.trim() : "";
+        if (!productValue) {
+          showToast("יש לכתוב בשדה 'אחר' של סוג ההצעה / מוצר", true);
+          return;
+        }
+      }
+      values[productIdx] = productValue;
+    }
+
+    saveRowBtn.disabled = true;
+    saveRowBtn.textContent = "שומר…";
+    try {
+      const res = await fetch("/api/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_type: state.sheetType,
+          row_number: activeRow.row_number,
+          values,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה בשמירה");
+
+      showToast("השורה עודכנה בהצלחה");
+      closeModal();
+      runSearch(state.mode);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      saveRowBtn.disabled = false;
+      saveRowBtn.textContent = "שמירת שינויים";
+    }
+  });
+})();
