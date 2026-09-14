@@ -93,6 +93,10 @@ Line: ${e.lineno}:${e.colno}</div>`
   const saveRowBtn = document.getElementById("save-row");
   const modalTitleEl = document.querySelector(".modal-header h3");
   const btnCreateRow = document.getElementById("btn-create-row");
+  const btnReports = document.getElementById("btn-reports");
+  const reportsPanel = document.getElementById("reports-panel");
+  const reportsSegmentGroup = document.getElementById("reports-segment-group");
+  const reportsList = document.getElementById("reports-list");
   const toast = document.getElementById("toast");
 
   let toastTimer = null;
@@ -103,6 +107,18 @@ Line: ${e.lineno}:${e.colno}</div>`
   let deleteConfirmPending = false;
   let isCreating = false;
   let createModalHeaders = [];
+  let reportData = null;
+  let reportKind = "actual";
+
+  const HEBREW_MONTHS = [
+    "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+    "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
+  ];
+
+  function formatMonthKey(key) {
+    const [year, month] = key.split("-").map(Number);
+    return `${HEBREW_MONTHS[month - 1]} ${year}`;
+  }
 
   function showToast(msg, isError) {
     toast.textContent = msg;
@@ -176,6 +192,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     if (isLoading) {
       resultsPanel.hidden = true;
       emptyState.hidden = true;
+      reportsPanel.hidden = true;
     }
   }
 
@@ -394,6 +411,81 @@ Line: ${e.lineno}:${e.colno}</div>`
       btnCreateRow.disabled = false;
     }
   });
+
+  btnReports.addEventListener("click", async () => {
+    btnReports.disabled = true;
+    resultsPanel.hidden = true;
+    emptyState.hidden = true;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "שגיאה בטעינת הדוח");
+      reportData = data;
+      reportsPanel.hidden = false;
+      renderReport();
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setLoading(false);
+      btnReports.disabled = false;
+    }
+  });
+
+  reportsSegmentGroup.addEventListener("click", (e) => {
+    const btn = e.target.closest(".segment");
+    if (!btn) return;
+    [...reportsSegmentGroup.children].forEach((c) => c.classList.remove("active"));
+    btn.classList.add("active");
+    reportKind = btn.dataset.value;
+    renderReport();
+  });
+
+  function renderReport() {
+    if (!reportData) return;
+    const months = reportData[reportKind] || [];
+    reportsList.innerHTML = "";
+
+    if (!months.length) {
+      reportsList.innerHTML = `<p style="color: var(--ink-soft); font-size: 13px; text-align: center; padding: 20px;">אין נתונים להצגה</p>`;
+      return;
+    }
+
+    months.forEach((entry) => {
+      const card = document.createElement("div");
+      card.className = "panel";
+      card.style.padding = "14px 16px";
+      card.style.marginBottom = "0";
+
+      const header = document.createElement("div");
+      header.style.display = "flex";
+      header.style.justifyContent = "space-between";
+      header.style.alignItems = "center";
+      header.style.marginBottom = "8px";
+      header.innerHTML = `
+        <span style="font-weight: 700; font-size: 14px;">${formatMonthKey(entry.month)}</span>
+        <span class="status-badge" style="background: var(--amber-bg); color: var(--amber);">סה"כ ${entry.total}</span>
+      `;
+      card.appendChild(header);
+
+      const productEntries = Object.entries(entry.products).sort((a, b) => b[1] - a[1]);
+      productEntries.forEach(([product, count]) => {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.fontSize = "13px";
+        row.style.padding = "4px 0";
+        row.style.borderTop = "1px solid var(--line)";
+        row.innerHTML = `<span style="color: var(--ink-soft);">${product}</span><span style="font-weight: 600;">${count}</span>`;
+        card.appendChild(row);
+      });
+
+      reportsList.appendChild(card);
+    });
+  }
 
   function openCreateModal(headers) {
     modalBody.innerHTML = "";
