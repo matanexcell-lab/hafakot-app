@@ -96,7 +96,10 @@ Line: ${e.lineno}:${e.colno}</div>`
   const btnReports = document.getElementById("btn-reports");
   const reportsPanel = document.getElementById("reports-panel");
   const reportsSegmentGroup = document.getElementById("reports-segment-group");
-  const reportsList = document.getElementById("reports-list");
+  const reportProductSelect = document.getElementById("report-product-select");
+  const reportMonthSelect = document.getElementById("report-month-select");
+  const reportResultNumber = document.getElementById("report-result-number");
+  const reportResultLabel = document.getElementById("report-result-label");
   const toast = document.getElementById("toast");
 
   let toastTimer = null;
@@ -426,7 +429,8 @@ Line: ${e.lineno}:${e.colno}</div>`
       if (!res.ok) throw new Error(data.error || "שגיאה בטעינת הדוח");
       reportData = data;
       reportsPanel.hidden = false;
-      renderReport();
+      populateReportSelectors();
+      updateReportResult();
     } catch (err) {
       showToast(err.message, true);
     } finally {
@@ -441,50 +445,45 @@ Line: ${e.lineno}:${e.colno}</div>`
     [...reportsSegmentGroup.children].forEach((c) => c.classList.remove("active"));
     btn.classList.add("active");
     reportKind = btn.dataset.value;
-    renderReport();
+    populateReportSelectors();
+    updateReportResult();
   });
 
-  function renderReport() {
-    if (!reportData) return;
-    const months = reportData[reportKind] || [];
-    reportsList.innerHTML = "";
+  reportProductSelect.addEventListener("change", updateReportResult);
+  reportMonthSelect.addEventListener("change", updateReportResult);
 
-    if (!months.length) {
-      reportsList.innerHTML = `<p style="color: var(--ink-soft); font-size: 13px; text-align: center; padding: 20px;">אין נתונים להצגה</p>`;
+  function populateReportSelectors() {
+    // Products: fixed pension product list, so the dropdown is always complete
+    // even for products with zero results this month.
+    const products = PRODUCT_CONFIG.pension.options;
+    const prevProduct = reportProductSelect.value;
+    reportProductSelect.innerHTML =
+      `<option value="">בחר מוצר…</option>` +
+      products.map((p) => `<option value="${p}">${p}</option>`).join("");
+    if (products.includes(prevProduct)) reportProductSelect.value = prevProduct;
+
+    // Months: only months that actually appear in this metric's data.
+    const months = (reportData && reportData[reportKind] ? reportData[reportKind] : []).map((e) => e.month);
+    const prevMonth = reportMonthSelect.value;
+    reportMonthSelect.innerHTML =
+      `<option value="">בחר חודש…</option>` +
+      months.map((m) => `<option value="${m}">${formatMonthKey(m)}</option>`).join("");
+    if (months.includes(prevMonth)) reportMonthSelect.value = prevMonth;
+  }
+
+  function updateReportResult() {
+    const product = reportProductSelect.value;
+    const month = reportMonthSelect.value;
+    if (!product || !month) {
+      reportResultNumber.textContent = "—";
+      reportResultLabel.textContent = "בחר מוצר וחודש";
       return;
     }
-
-    months.forEach((entry) => {
-      const card = document.createElement("div");
-      card.className = "panel";
-      card.style.padding = "14px 16px";
-      card.style.marginBottom = "0";
-
-      const header = document.createElement("div");
-      header.style.display = "flex";
-      header.style.justifyContent = "space-between";
-      header.style.alignItems = "center";
-      header.style.marginBottom = "8px";
-      header.innerHTML = `
-        <span style="font-weight: 700; font-size: 14px;">${formatMonthKey(entry.month)}</span>
-        <span class="status-badge" style="background: var(--amber-bg); color: var(--amber);">סה"כ ${entry.total}</span>
-      `;
-      card.appendChild(header);
-
-      const productEntries = Object.entries(entry.products).sort((a, b) => b[1] - a[1]);
-      productEntries.forEach(([product, count]) => {
-        const row = document.createElement("div");
-        row.style.display = "flex";
-        row.style.justifyContent = "space-between";
-        row.style.fontSize = "13px";
-        row.style.padding = "4px 0";
-        row.style.borderTop = "1px solid var(--line)";
-        row.innerHTML = `<span style="color: var(--ink-soft);">${product}</span><span style="font-weight: 600;">${count}</span>`;
-        card.appendChild(row);
-      });
-
-      reportsList.appendChild(card);
-    });
+    const monthEntry = (reportData[reportKind] || []).find((e) => e.month === month);
+    const count = monthEntry ? monthEntry.products[product] || 0 : 0;
+    reportResultNumber.textContent = count;
+    const kindLabel = reportKind === "actual" ? "ניוד בפועל" : "צפי ניוד";
+    reportResultLabel.textContent = `${kindLabel} · ${product} · ${formatMonthKey(month)}`;
   }
 
   function openCreateModal(headers) {
