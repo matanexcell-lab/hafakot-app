@@ -64,7 +64,17 @@
         <button type="button" class="segment active" data-value="actual">ניוד בפועל</button>
         <button type="button" class="segment" data-value="potential">צפי ניוד (פוטנציאל)</button>
       </div>
-      <div id="reports-list" style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px;"></div>
+
+      <label class="field-label" style="margin-top: 14px;">מוצר</label>
+      <select id="report-product-select" class="tz-input"></select>
+
+      <label class="field-label" style="margin-top: 14px;">חודש</label>
+      <select id="report-month-select" class="tz-input"></select>
+
+      <div id="report-result" style="margin-top: 18px; text-align: center; padding: 20px; background: var(--paper); border-radius: 10px; border: 1.5px solid var(--line);">
+        <div id="report-result-number" style="font-size: 32px; font-weight: 800; color: var(--ink);">—</div>
+        <div id="report-result-label" style="font-size: 13px; color: var(--ink-soft); margin-top: 4px;">בחר מוצר וחודש</div>
+      </div>
     </section>
 
     <section class="panel results-panel" id="results-panel" hidden>
