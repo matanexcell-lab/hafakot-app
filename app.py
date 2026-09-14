@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from functools import wraps
 from urllib.parse import quote
 
@@ -28,6 +29,8 @@ H_TRANSFER_COMPANY = "חברה מעבירה"
 H_PRODUCT = "סוג ההצעה / מוצר"
 H_STATUS = "סטטוס הפקה"
 H_TRANSFER_ACTUAL = "ניוד בפועל"
+H_TRANSFER_EXPECTED = "ניוד צפוי"
+H_DATE = "תאריך"
 H_LAST_UPDATE = "תאריך עדכון אחרון"
 
 
@@ -278,6 +281,68 @@ def delete_row(sheet_type, row_number):
     _api_batch_update(requests_body)
 
 
+def parse_month_key(date_str):
+    """Extracts a 'YYYY-MM' key from a date string like '16/08/2026'.
+    Returns None if it can't be parsed."""
+    if not date_str:
+        return None
+    s = date_str.strip()
+    m = re.match(r"^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$", s)
+    if not m:
+        return None
+    _day, month, year = m.groups()
+    month = int(month)
+    year = int(year)
+    if year < 100:
+        year += 2000
+    if not (1 <= month <= 12):
+        return None
+    return f"{year:04d}-{month:02d}"
+
+
+def build_report():
+    """Aggregates, by month (from the 'תאריך' column) and product,
+    how many rows have an actual transfer (ניוד בפועל) vs an expected/
+    potential one (ניוד צפוי)."""
+    headers, rows = fetch_sheet("pension")
+
+    date_idx = headers.index(H_DATE) if H_DATE in headers else -1
+    actual_idx = headers.index(H_TRANSFER_ACTUAL) if H_TRANSFER_ACTUAL in headers else -1
+    potential_idx = headers.index(H_TRANSFER_EXPECTED) if H_TRANSFER_EXPECTED in headers else -1
+    product_idx = headers.index(H_PRODUCT) if H_PRODUCT in headers else -1
+
+    actual_agg = {}
+    potential_agg = {}
+
+    for r in rows:
+        vals = r["values"]
+        if date_idx == -1 or date_idx >= len(vals):
+            continue
+        month_key = parse_month_key(vals[date_idx])
+        if not month_key:
+            continue
+        product = vals[product_idx].strip() if 0 <= product_idx < len(vals) else ""
+        if not product:
+            product = "לא צוין"
+
+        if 0 <= actual_idx < len(vals) and vals[actual_idx].strip():
+            actual_agg.setdefault(month_key, {}).setdefault(product, 0)
+            actual_agg[month_key][product] += 1
+        if 0 <= potential_idx < len(vals) and vals[potential_idx].strip():
+            potential_agg.setdefault(month_key, {}).setdefault(product, 0)
+            potential_agg[month_key][product] += 1
+
+    def to_list(agg):
+        result = []
+        for month_key in sorted(agg.keys(), reverse=True):
+            products = agg[month_key]
+            total = sum(products.values())
+            result.append({"month": month_key, "products": products, "total": total})
+        return result
+
+    return {"actual": to_list(actual_agg), "potential": to_list(potential_agg)}
+
+
 # ---------- Auth ----------
 
 
@@ -392,6 +457,16 @@ def api_create_row():
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
+
+
+@app.route("/api/report", methods=["POST"])
+@login_required
+def api_report():
+    try:
+        data = build_report()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
 
 
 @app.route("/api/update", methods=["POST"])
