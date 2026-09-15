@@ -452,6 +452,17 @@ Line: ${e.lineno}:${e.colno}</div>`
   reportProductSelect.addEventListener("change", updateReportResult);
   reportMonthSelect.addEventListener("change", updateReportResult);
 
+  const REPORT_PRODUCT_GROUP_VALUE = "__group_non_pension__";
+  const REPORT_PRODUCT_GROUP_LABEL = "גמל + השתלמות + גמל להשקעה (הכל יחד)";
+  const REPORT_PRODUCT_GROUP_ITEMS = [
+    "הצטרפות לקופת גמל",
+    "הצטרפות לקופת גמל עם ניוד",
+    "הצטרפות לקרן השתלמות",
+    "הצטרפות לקרן השתלמות עם ניוד",
+    "הצטרפות לקופת גמל להשקעה",
+    "הצטרפות לקופת גמל להשקעה עם ניוד",
+  ];
+
   function populateReportSelectors() {
     // Products: fixed pension product list, so the dropdown is always complete
     // even for products with zero results this month.
@@ -459,8 +470,11 @@ Line: ${e.lineno}:${e.colno}</div>`
     const prevProduct = reportProductSelect.value;
     reportProductSelect.innerHTML =
       `<option value="">בחר מוצר…</option>` +
+      `<option value="${REPORT_PRODUCT_GROUP_VALUE}">${REPORT_PRODUCT_GROUP_LABEL}</option>` +
       products.map((p) => `<option value="${p}">${p}</option>`).join("");
-    if (products.includes(prevProduct)) reportProductSelect.value = prevProduct;
+    if (prevProduct === REPORT_PRODUCT_GROUP_VALUE || products.includes(prevProduct)) {
+      reportProductSelect.value = prevProduct;
+    }
 
     // Months: only months that actually appear in this metric's data.
     const months = (reportData && reportData[reportKind] ? reportData[reportKind] : []).map((e) => e.month);
@@ -480,10 +494,19 @@ Line: ${e.lineno}:${e.colno}</div>`
       return;
     }
     const monthEntry = (reportData[reportKind] || []).find((e) => e.month === month);
-    const count = monthEntry ? monthEntry.products[product] || 0 : 0;
-    reportResultNumber.textContent = count;
+    let sum = 0;
+    let productLabel = product;
+    if (monthEntry) {
+      if (product === REPORT_PRODUCT_GROUP_VALUE) {
+        sum = REPORT_PRODUCT_GROUP_ITEMS.reduce((acc, p) => acc + (monthEntry.products[p] || 0), 0);
+        productLabel = REPORT_PRODUCT_GROUP_LABEL;
+      } else {
+        sum = monthEntry.products[product] || 0;
+      }
+    }
+    reportResultNumber.textContent = sum.toLocaleString("he-IL");
     const kindLabel = reportKind === "actual" ? "ניוד בפועל" : "צפי ניוד";
-    reportResultLabel.textContent = `${kindLabel} · ${product} · ${formatMonthKey(month)}`;
+    reportResultLabel.textContent = `${kindLabel} · ${productLabel} · ${formatMonthKey(month)}`;
   }
 
   function openCreateModal(headers) {
