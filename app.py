@@ -281,6 +281,20 @@ def delete_row(sheet_type, row_number):
     _api_batch_update(requests_body)
 
 
+def parse_amount(s):
+    """Parses a number out of a cell like '50,000' or '₪50000' or '50000.5'.
+    Returns 0 if the cell is empty or not a number."""
+    if not s:
+        return 0
+    cleaned = re.sub(r"[^\d.\-]", "", s.strip())
+    if not cleaned or cleaned in ("-", "."):
+        return 0
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0
+
+
 def parse_month_key(date_str):
     """Extracts a 'YYYY-MM' key from a date string like '16/08/2026'.
     Returns None if it can't be parsed."""
@@ -301,9 +315,8 @@ def parse_month_key(date_str):
 
 
 def build_report():
-    """Aggregates, by month (from the 'תאריך' column) and product,
-    how many rows have an actual transfer (ניוד בפועל) vs an expected/
-    potential one (ניוד צפוי)."""
+    """Aggregates, by month (from the 'תאריך' column) and product, the SUM
+    of the numeric values in ניוד בפועל and ניוד צפוי (not a row count)."""
     headers, rows = fetch_sheet("pension")
 
     date_idx = headers.index(H_DATE) if H_DATE in headers else -1
@@ -325,12 +338,16 @@ def build_report():
         if not product:
             product = "לא צוין"
 
-        if 0 <= actual_idx < len(vals) and vals[actual_idx].strip():
-            actual_agg.setdefault(month_key, {}).setdefault(product, 0)
-            actual_agg[month_key][product] += 1
-        if 0 <= potential_idx < len(vals) and vals[potential_idx].strip():
-            potential_agg.setdefault(month_key, {}).setdefault(product, 0)
-            potential_agg[month_key][product] += 1
+        if 0 <= actual_idx < len(vals):
+            amt = parse_amount(vals[actual_idx])
+            if amt:
+                actual_agg.setdefault(month_key, {}).setdefault(product, 0)
+                actual_agg[month_key][product] += amt
+        if 0 <= potential_idx < len(vals):
+            amt = parse_amount(vals[potential_idx])
+            if amt:
+                potential_agg.setdefault(month_key, {}).setdefault(product, 0)
+                potential_agg[month_key][product] += amt
 
     def to_list(agg):
         result = []
