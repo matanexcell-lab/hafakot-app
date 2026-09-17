@@ -10,6 +10,8 @@
   --gold-dark: #9C6B1B;
   --green: #2F7D5A;
   --green-bg: #E7F3ED;
+  --red: #C0392B;
+  --red-bg: #FBEAE8;
   --amber: #B3752E;
   --amber-bg: #FBF0E1;
   --danger: #B3413E;
@@ -177,6 +179,12 @@ button, input {
   color: var(--ink);
 }
 
+.action-btn.danger {
+  background: var(--red-bg);
+  border-color: var(--red);
+  color: var(--red);
+}
+
 .action-btn:active { transform: scale(0.98); }
 
 .action-title { font-size: 14px; font-weight: 700; }
@@ -222,6 +230,7 @@ button, input {
   background: var(--amber);
 }
 .row-card.is-green .ribbon { background: var(--green); }
+.row-card.is-red .ribbon { background: var(--red); }
 
 .row-card-body {
   flex: 1;
@@ -252,6 +261,10 @@ button, input {
 .row-card.is-green .status-badge {
   background: var(--green-bg);
   color: var(--green);
+}
+.row-card.is-red .status-badge {
+  background: var(--red-bg);
+  color: var(--red);
 }
 
 .row-fields {
@@ -408,6 +421,9 @@ button, input {
 .modal-footer {
   padding: 14px 18px;
   border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .modal-footer .action-btn { width: 100%; }
 
