@@ -32,6 +32,7 @@ H_TRANSFER_ACTUAL = "ניוד בפועל"
 H_TRANSFER_EXPECTED = "ניוד צפוי"
 H_DATE = "תאריך"
 H_LAST_UPDATE = "תאריך עדכון אחרון"
+H_NOTES = "הערות"
 
 
 # ---------- Google Sheets helpers ----------
@@ -464,89 +465,4 @@ def api_create_row():
     sheet_type = data.get("sheet_type")
     values = data.get("values")
 
-    if sheet_type not in SHEET_NAMES:
-        return jsonify({"error": "סוג גיליון לא תקין"}), 400
-    if not isinstance(values, list):
-        return jsonify({"error": "נתונים חסרים"}), 400
-
-    try:
-        create_row(sheet_type, values)
-    except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify({"ok": True})
-
-
-@app.route("/api/report", methods=["POST"])
-@login_required
-def api_report():
-    try:
-        data = build_report()
-    except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify(data)
-
-
-@app.route("/api/update", methods=["POST"])
-@login_required
-def api_update():
-    data = request.get_json(force=True)
-    sheet_type = data.get("sheet_type")
-    row_number = data.get("row_number")
-    values = data.get("values")
-
-    if sheet_type not in SHEET_NAMES:
-        return jsonify({"error": "סוג גיליון לא תקין"}), 400
-    if not row_number or not isinstance(values, list):
-        return jsonify({"error": "נתונים חסרים"}), 400
-
-    try:
-        update_row(sheet_type, row_number, values)
-    except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify({"ok": True})
-
-
-@app.route("/api/mark_row", methods=["POST"])
-@login_required
-def api_mark_row():
-    data = request.get_json(force=True)
-    sheet_type = data.get("sheet_type")
-    row_number = data.get("row_number")
-    num_cols = data.get("num_cols")
-    color = data.get("color", "none")
-
-    if sheet_type not in SHEET_NAMES:
-        return jsonify({"error": "סוג גיליון לא תקין"}), 400
-    if not row_number or not num_cols:
-        return jsonify({"error": "נתונים חסרים"}), 400
-    if color not in ("green", "red", "none"):
-        return jsonify({"error": "צבע לא תקין"}), 400
-
-    try:
-        set_row_color(sheet_type, row_number, num_cols, color)
-    except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify({"ok": True})
-
-
-@app.route("/api/delete_row", methods=["POST"])
-@login_required
-def api_delete_row():
-    data = request.get_json(force=True)
-    sheet_type = data.get("sheet_type")
-    row_number = data.get("row_number")
-
-    if sheet_type not in SHEET_NAMES:
-        return jsonify({"error": "סוג גיליון לא תקין"}), 400
-    if not row_number:
-        return jsonify({"error": "נתונים חסרים"}), 400
-
-    try:
-        delete_row(sheet_type, row_number)
-    except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify({"ok": True})
-
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    if sheet_
