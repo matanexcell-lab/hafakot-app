@@ -12,6 +12,7 @@ Line: ${e.lineno}:${e.colno}</div>`
   const H_CLIENT_NAME = "שם לקוח";
   const H_COMPANY = "חברה";
   const H_TRANSFER_COMPANY = "חברה מעבירה";
+  const H_TRANSFER_FUND_NUMBER = "מספר קופה מעבירה";
   const H_PRODUCT = "סוג ההצעה / מוצר";
   const H_STATUS = "סטטוס הפקה";
   const H_LAST_UPDATE = "תאריך עדכון אחרון";
@@ -330,6 +331,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     const company = getVal(headers, row, H_COMPANY);
     const product = getVal(headers, row, H_PRODUCT);
     const transferCompany = getVal(headers, row, H_TRANSFER_COMPANY);
+    const transferFundNumber = getVal(headers, row, H_TRANSFER_FUND_NUMBER);
 
     const addField = (label, value) => {
       const l = document.createElement("span");
@@ -346,6 +348,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     if (company) addField(H_COMPANY, company);
     if (product) addField(H_PRODUCT, product);
     if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
+    if (transferFundNumber) addField(H_TRANSFER_FUND_NUMBER, transferFundNumber);
 
     body.appendChild(fields);
 
@@ -497,6 +500,8 @@ Line: ${e.lineno}:${e.colno}</div>`
   reportMonthSelect.addEventListener("change", updateReportResult);
 
   function populateReportSelectors() {
+    // Products: fixed pension product list, so the dropdown is always complete
+    // even for products with zero results this month.
     const products = PRODUCT_CONFIG.pension.options;
     const prevProduct = reportProductSelect.value;
     reportProductSelect.innerHTML =
@@ -507,6 +512,7 @@ Line: ${e.lineno}:${e.colno}</div>`
       reportProductSelect.value = prevProduct;
     }
 
+    // Months: only months that actually appear in this metric's data.
     const months = (reportData && reportData[reportKind] ? reportData[reportKind] : []).map((e) => e.month);
     const prevMonth = reportMonthSelect.value;
     reportMonthSelect.innerHTML =
