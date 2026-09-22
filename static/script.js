@@ -66,6 +66,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     tz: { label: "תעודת זהות לקוח", placeholder: "לדוגמה: 123456789", numeric: true },
     name: { label: "שם לקוח", placeholder: "לדוגמה: ישראל ישראלי", numeric: false },
     company: { label: "שם חברה", placeholder: "לדוגמה: הראל", numeric: false },
+    product: { label: "סוג הצעה / מוצר", placeholder: "", numeric: false },
   };
 
   const state = {
@@ -78,6 +79,7 @@ Line: ${e.lineno}:${e.colno}</div>`
 
   const tzInput = document.getElementById("tz-input");
   const companySearchSelect = document.getElementById("company-search-select");
+  const productSearchSelect = document.getElementById("product-search-select");
   const searchLabel = document.getElementById("search-label");
   const searchByGroup = document.getElementById("search-by-group");
   const sheetTypeGroup = document.getElementById("sheet-type-group");
@@ -196,6 +198,23 @@ Line: ${e.lineno}:${e.colno}</div>`
   }
   populateCompanySearchSelect();
 
+  function populateProductSearchSelect() {
+    const config = PRODUCT_CONFIG[state.sheetType] || { options: [] };
+    let html = `<option value="">בחר מוצר…</option>`;
+    if (state.sheetType === "pension") {
+      html += `<option value="${REPORT_PRODUCT_GROUP_VALUE}">${REPORT_PRODUCT_GROUP_LABEL}</option>`;
+    }
+    html += config.options.map((opt) => `<option value="${opt}">${opt}</option>`).join("");
+    productSearchSelect.innerHTML = html;
+  }
+  populateProductSearchSelect();
+
+  function showSearchWidget(kind) {
+    tzInput.hidden = kind !== "text";
+    companySearchSelect.hidden = kind !== "company";
+    productSearchSelect.hidden = kind !== "product";
+  }
+
   searchByGroup.addEventListener("click", (e) => {
     const btn = e.target.closest(".segment");
     if (!btn) return;
@@ -205,12 +224,13 @@ Line: ${e.lineno}:${e.colno}</div>`
     const cfg = SEARCH_LABELS[state.searchBy];
     searchLabel.textContent = cfg.label;
     if (state.searchBy === "company") {
-      tzInput.hidden = true;
-      companySearchSelect.hidden = false;
+      showSearchWidget("company");
       companySearchSelect.value = "";
+    } else if (state.searchBy === "product") {
+      showSearchWidget("product");
+      productSearchSelect.value = "";
     } else {
-      companySearchSelect.hidden = true;
-      tzInput.hidden = false;
+      showSearchWidget("text");
       tzInput.placeholder = cfg.placeholder;
       if (cfg.numeric) {
         tzInput.inputMode = "numeric";
@@ -230,6 +250,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     btn.classList.add("active");
     state.sheetType = btn.dataset.value;
     populateCompanySearchSelect();
+    populateProductSearchSelect();
   });
 
   btnUpdate.addEventListener("click", () => runSearch("update"));
@@ -245,10 +266,17 @@ Line: ${e.lineno}:${e.colno}</div>`
   }
 
   async function runSearch(mode) {
-    const query = state.searchBy === "company" ? companySearchSelect.value.trim() : tzInput.value.trim();
+    let query;
+    if (state.searchBy === "company") {
+      query = companySearchSelect.value.trim();
+    } else if (state.searchBy === "product") {
+      query = productSearchSelect.value.trim();
+    } else {
+      query = tzInput.value.trim();
+    }
     if (!query) {
       showToast(`יש לבחור/להזין ${SEARCH_LABELS[state.searchBy].label}`, true);
-      if (state.searchBy !== "company") tzInput.focus();
+      if (state.searchBy === "tz" || state.searchBy === "name") tzInput.focus();
       return;
     }
     state.mode = mode;
