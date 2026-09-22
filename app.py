@@ -34,6 +34,16 @@ H_DATE = "תאריך"
 H_LAST_UPDATE = "תאריך עדכון אחרון"
 H_NOTES = "הערות"
 
+PRODUCT_GROUP_MARKER = "__group_non_pension__"
+PRODUCT_GROUP_ITEMS = {
+    "הצטרפות לקופת גמל",
+    "הצטרפות לקופת גמל עם ניוד",
+    "הצטרפות לקרן השתלמות",
+    "הצטרפות לקרן השתלמות עם ניוד",
+    "הצטרפות לקופת גמל להשקעה",
+    "הצטרפות לקופת גמל להשקעה עם ניוד",
+}
+
 
 # ---------- Google Sheets helpers ----------
 
@@ -433,6 +443,16 @@ def api_search():
         idx = headers.index(H_CLIENT_NAME)
         q = query.lower()
         matched = [r for r in rows if r["values"] and q in r["values"][idx].lower()]
+    elif search_by == "product":
+        if H_PRODUCT not in headers:
+            return jsonify({"error": f"לא נמצאה עמודה בשם '{H_PRODUCT}'"}), 500
+        idx = headers.index(H_PRODUCT)
+        if query == PRODUCT_GROUP_MARKER:
+            matched = [
+                r for r in rows if r["values"] and r["values"][idx].strip() in PRODUCT_GROUP_ITEMS
+            ]
+        else:
+            matched = [r for r in rows if r["values"] and r["values"][idx].strip() == query]
     else:
         matched = [
             r for r in rows if r["values"] and r["values"][ID_COLUMN_INDEX].strip() == query
