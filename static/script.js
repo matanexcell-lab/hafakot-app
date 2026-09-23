@@ -89,6 +89,7 @@ Line: ${e.lineno}:${e.colno}</div>`
   const resultsTitle = document.getElementById("results-title");
   const resultsCount = document.getElementById("results-count");
   const resultsList = document.getElementById("results-list");
+  const resultsSortSelect = document.getElementById("results-sort-select");
   const emptyState = document.getElementById("empty-state");
   const emptyText = document.getElementById("empty-text");
   const loading = document.getElementById("loading");
@@ -158,6 +159,15 @@ Line: ${e.lineno}:${e.colno}</div>`
     const idx = headers.indexOf(headerName);
     if (idx === -1) return "";
     return (row.values[idx] || "").trim();
+  }
+
+  function parseDateForSort(str) {
+    if (!str) return null;
+    const m = str.trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+    if (!m) return null;
+    let [, d, mo, y] = m.map(Number);
+    if (y < 100) y += 2000;
+    return y * 10000 + mo * 100 + d;
   }
 
   // Validates business rules tied to the selected product, using the final
@@ -309,7 +319,8 @@ Line: ${e.lineno}:${e.colno}</div>`
   }
 
   function renderResults() {
-    const { headers, rows, mode } = state;
+    const { headers, mode } = state;
+    let rows = state.rows;
 
     if (!rows.length) {
       resultsPanel.hidden = true;
@@ -319,6 +330,19 @@ Line: ${e.lineno}:${e.colno}</div>`
           : "לא נמצאו שורות";
       emptyState.hidden = false;
       return;
+    }
+
+    const sortOrder = resultsSortSelect.value;
+    if (sortOrder === "asc" || sortOrder === "desc") {
+      const lastUpdateIdx = headers.indexOf(H_LAST_UPDATE);
+      rows = [...rows].sort((a, b) => {
+        const da = lastUpdateIdx !== -1 ? parseDateForSort(a.values[lastUpdateIdx]) : null;
+        const db = lastUpdateIdx !== -1 ? parseDateForSort(b.values[lastUpdateIdx]) : null;
+        if (da === null && db === null) return 0;
+        if (da === null) return 1; // rows without a date go last
+        if (db === null) return -1;
+        return sortOrder === "asc" ? da - db : db - da;
+      });
     }
 
     emptyState.hidden = true;
@@ -331,6 +355,8 @@ Line: ${e.lineno}:${e.colno}</div>`
       resultsList.appendChild(renderRowCard(row, headers));
     });
   }
+
+  resultsSortSelect.addEventListener("change", renderResults);
 
   function renderRowCard(row, headers) {
     const card = document.createElement("div");
@@ -356,10 +382,12 @@ Line: ${e.lineno}:${e.colno}</div>`
     fields.className = "row-fields";
 
     const clientName = getVal(headers, row, H_CLIENT_NAME);
+    const clientId = getVal(headers, row, H_ID);
     const company = getVal(headers, row, H_COMPANY);
     const product = getVal(headers, row, H_PRODUCT);
     const transferCompany = getVal(headers, row, H_TRANSFER_COMPANY);
     const transferFundNumber = getVal(headers, row, H_TRANSFER_FUND_NUMBER);
+    const lastUpdate = getVal(headers, row, H_LAST_UPDATE);
 
     const addField = (label, value) => {
       const l = document.createElement("span");
@@ -372,11 +400,13 @@ Line: ${e.lineno}:${e.colno}</div>`
       fields.appendChild(v);
     };
 
-    if (state.searchBy !== "name" && clientName) addField(H_CLIENT_NAME, clientName);
+    if (clientName) addField(H_CLIENT_NAME, clientName);
+    if (clientId) addField(H_ID, clientId);
     if (company) addField(H_COMPANY, company);
     if (product) addField(H_PRODUCT, product);
     if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
     if (transferFundNumber) addField(H_TRANSFER_FUND_NUMBER, transferFundNumber);
+    if (lastUpdate) addField(H_LAST_UPDATE, lastUpdate);
 
     body.appendChild(fields);
 
