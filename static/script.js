@@ -80,6 +80,7 @@ Line: ${e.lineno}:${e.colno}</div>`
   const tzInput = document.getElementById("tz-input");
   const companySearchSelect = document.getElementById("company-search-select");
   const productSearchSelect = document.getElementById("product-search-select");
+  const productMonthSelect = document.getElementById("product-month-select");
   const searchLabel = document.getElementById("search-label");
   const searchByGroup = document.getElementById("search-by-group");
   const sheetTypeGroup = document.getElementById("sheet-type-group");
@@ -219,10 +220,23 @@ Line: ${e.lineno}:${e.colno}</div>`
   }
   populateProductSearchSelect();
 
+  function populateProductMonthSelect() {
+    const now = new Date();
+    let html = `<option value="">בחר חודש…</option>`;
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      html += `<option value="${key}">${formatMonthKey(key)}</option>`;
+    }
+    productMonthSelect.innerHTML = html;
+  }
+  populateProductMonthSelect();
+
   function showSearchWidget(kind) {
     tzInput.hidden = kind !== "text";
     companySearchSelect.hidden = kind !== "company";
     productSearchSelect.hidden = kind !== "product";
+    productMonthSelect.hidden = kind !== "product";
   }
 
   searchByGroup.addEventListener("click", (e) => {
@@ -239,6 +253,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     } else if (state.searchBy === "product") {
       showSearchWidget("product");
       productSearchSelect.value = "";
+      productMonthSelect.value = "";
     } else {
       showSearchWidget("text");
       tzInput.placeholder = cfg.placeholder;
@@ -289,6 +304,14 @@ Line: ${e.lineno}:${e.colno}</div>`
       if (state.searchBy === "tz" || state.searchBy === "name") tzInput.focus();
       return;
     }
+    let month = "";
+    if (state.searchBy === "product") {
+      month = productMonthSelect.value.trim();
+      if (!month) {
+        showToast("יש לבחור גם חודש", true);
+        return;
+      }
+    }
     state.mode = mode;
     setLoading(true);
     try {
@@ -299,6 +322,7 @@ Line: ${e.lineno}:${e.colno}</div>`
           sheet_type: state.sheetType,
           search_by: state.searchBy,
           query,
+          month,
           mode,
         }),
       });
