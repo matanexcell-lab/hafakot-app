@@ -453,6 +453,17 @@ def api_search():
             ]
         else:
             matched = [r for r in rows if r["values"] and r["values"][idx].strip() == query]
+
+        month = (data.get("month") or "").strip()
+        if month:
+            if H_DATE not in headers:
+                return jsonify({"error": f"לא נמצאה עמודה בשם '{H_DATE}'"}), 500
+            date_idx = headers.index(H_DATE)
+            matched = [
+                r for r in matched
+                if r["values"] and date_idx < len(r["values"])
+                and parse_month_key(r["values"][date_idx]) == month
+            ]
     else:
         matched = [
             r for r in rows if r["values"] and r["values"][ID_COLUMN_INDEX].strip() == query
