@@ -33,6 +33,7 @@ H_TRANSFER_EXPECTED = "ניוד צפוי"
 H_DATE = "תאריך"
 H_LAST_UPDATE = "תאריך עדכון אחרון"
 H_NOTES = "הערות"
+H_TRANSFER_FUND_NUMBER = "מספר קופה מעבירה"
 
 PRODUCT_GROUP_MARKER = "__group_non_pension__"
 PRODUCT_GROUP_ITEMS = {
@@ -80,6 +81,17 @@ def _api_put_values(range_, values):
         url,
         params={"valueInputOption": "USER_ENTERED"},
         json={"values": [values]},
+    )
+    if not resp.ok:
+        raise RuntimeError(f"שגיאה בשמירה לגוגל שיטס: {resp.status_code} {resp.text[:300]}")
+
+
+def _api_values_batch_update(data):
+    """data = [{"range": "'tab'!A1", "values": [[...]]}, ...] - writes only those cells."""
+    http = get_http()
+    resp = http.post(
+        f"{SHEETS_API_BASE}/{SPREADSHEET_ID}/values:batchUpdate",
+        json={"valueInputOption": "USER_ENTERED", "data": data},
     )
     if not resp.ok:
         raise RuntimeError(f"שגיאה בשמירה לגוגל שיטס: {resp.status_code} {resp.text[:300]}")
@@ -371,6 +383,306 @@ def build_report():
     return {"actual": to_list(actual_agg), "potential": to_list(potential_agg)}
 
 
+# ---------- Daily report import (per-company adapters) ----------
+
+# Each company has its own report format. The browser reads the Excel file and
+# sends only the columns we need, already translated to these generic keys:
+#   id, name, acc (transfer account), amount, transfer_status,
+#   join_status, reject_desc, reject_detail
+# Adding a company = adding a browser-side adapter (script.js) + an entry here.
+DAILY_COMPANIES = {
+    "meitav": {
+        "label": "מיטב",
+        "site_company": "מיטב",  # substring that must appear in the site's 'חברה' column
+        "pending_statuses": ["ממתין להפקדה ראשונה", "בתהליך קליטת סדין"],
+        "reject_word": "דחייה",
+    }
+}
+
+# PILOT LOCK: while this list is non-empty, the daily import can preview and
+# write ONLY for these IDs, whatever the report or the browser sends.
+# To open it to everyone: set the list to [] (or set env DAILY_PILOT_IDS=off).
+DAILY_PILOT_IDS = ["239149982", "324190263"]  # ליאם מאיר פרחי, קורל קולדובסקי
+_env_pilot = os.environ.get("DAILY_PILOT_IDS")
+if _env_pilot is not None:
+    DAILY_PILOT_IDS = [] if _env_pilot.strip().lower() in ("", "off") else [
+        x for x in re.split(r"[\s,;]+", _env_pilot) if x]
+
+
+def pilot_lock():
+    return {norm_id(x) for x in DAILY_PILOT_IDS if norm_id(x)}
+
+
+DONE_TEXT = "ניוד בוצע לפי דוח יומי ממוכן"
+MIN_COMMON = 5  # a shared sequence of this many characters is enough to match accounts
+
+
+def norm_id(s):
+    """Digits only, leading zeros dropped (so 066690355 == 66690355)."""
+    return re.sub(r"\D", "", s or "").lstrip("0")
+
+
+def norm_acc(s):
+    return re.sub(r"[^0-9A-Za-z֐-׿]", "", s or "").lower()
+
+
+def accounts_match(a, b, k=MIN_COMMON):
+    a, b = norm_acc(a), norm_acc(b)
+    if not a or not b:
+        return False
+    if len(a) < k or len(b) < k:
+        return a == b
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return any(short[i:i + k] in long_ for i in range(len(short) - k + 1))
+
+
+def fmt_amount(x):
+    return f"{x:.2f}".rstrip("0").rstrip(".")
+
+
+def classify_report_row(r, cfg):
+    """Returns (kind, text, amount) for a single report row.
+    kind: 'done' | 'pending' | 'reject' | 'none'"""
+    amount = parse_amount(r.get("amount", ""))
+    if amount > 0:
+        return "done", DONE_TEXT, amount
+    transfer_status = (r.get("transfer_status") or "").strip()
+    if transfer_status in cfg["pending_statuses"]:
+        return "pending", transfer_status, 0
+    if (r.get("join_status") or "").strip() == cfg["reject_word"]:
+        desc = (r.get("reject_desc") or "").strip()
+        detail = (r.get("reject_detail") or "").strip()
+        text = cfg["reject_word"]
+        if desc:
+            text += " " + desc
+        if detail and desc == "אחר":
+            text += " - " + detail
+        return "reject", text, 0
+    return "none", "", 0
+
+
+def last_status_text(status_cell):
+    """Text of the last line in the status history, without its leading date."""
+    lines = [l.strip() for l in (status_cell or "").splitlines() if l.strip()]
+    if not lines:
+        return ""
+    return re.sub(r"^\d{1,2}/\d{1,2}/\d{2,4}\s*-\s*", "", lines[-1]).strip()
+
+
+def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=None):
+    """Pure function: decides what WOULD be written. Never touches Google.
+
+    Only site rows that (a) belong to the company, (b) have an empty
+    'ניוד בפועל', (c) are neither green nor red, are considered.
+    Returns {"items": [...], "stats": {...}}"""
+    cfg = DAILY_COMPANIES[company_key]
+
+    def idx(name):
+        return headers.index(name) if name in headers else -1
+
+    i_name, i_company = idx(H_CLIENT_NAME), idx(H_COMPANY)
+    i_product, i_tcomp = idx(H_PRODUCT), idx(H_TRANSFER_COMPANY)
+    i_fund, i_status = idx(H_TRANSFER_FUND_NUMBER), idx(H_STATUS)
+    i_actual = idx(H_TRANSFER_ACTUAL)
+    for need, i in ((H_TRANSFER_ACTUAL, i_actual), (H_STATUS, i_status), (H_COMPANY, i_company)):
+        if i == -1:
+            raise RuntimeError(f"לא נמצאה עמודה בשם '{need}' בגיליון")
+
+    def cell(r, i):
+        return (r["values"][i] if 0 <= i < len(r["values"]) else "").strip()
+
+    pilot = {norm_id(x) for x in (pilot_ids or []) if norm_id(x)}
+
+    # report rows grouped by id
+    by_id = {}
+    for n, r in enumerate(report_rows):
+        rid = norm_id(r.get("id", ""))
+        if not rid or (pilot and rid not in pilot):
+            continue
+        r = dict(r)
+        r["_n"] = n
+        by_id.setdefault(rid, []).append(r)
+
+    stats = {"site_rows_total": len(sheet_rows), "skipped_has_actual": 0, "skipped_color": 0,
+             "skipped_other_company": 0, "eligible": 0, "id_not_in_report": 0}
+    eligible = []
+    for r in sheet_rows:
+        rid = norm_id(r["values"][ID_COLUMN_INDEX] if len(r["values"]) > ID_COLUMN_INDEX else "")
+        if not rid:
+            continue
+        if pilot and rid not in pilot:
+            continue
+        if cfg["site_company"] not in cell(r, i_company):
+            stats["skipped_other_company"] += 1
+            continue
+        if cell(r, i_actual):
+            stats["skipped_has_actual"] += 1
+            continue
+        if r["is_green"] or r["is_red"]:
+            stats["skipped_color"] += 1
+            continue
+        eligible.append((r, rid))
+    stats["eligible"] = len(eligible)
+
+    # candidates per site row
+    cands = {}
+    usage = {}  # report row n -> list of site row numbers that matched it
+    for r, rid in eligible:
+        fund = cell(r, i_fund)
+        found = []
+        for rep in by_id.get(rid, []):
+            if fund and accounts_match(fund, rep.get("acc", "")):
+                kind, text, amount = classify_report_row(rep, cfg)
+                found.append((rep, kind, text, amount))
+        cands[r["row_number"]] = found
+        for rep, *_ in found:
+            usage.setdefault(rep["_n"], []).append(r["row_number"])
+
+    items = []
+    for r, rid in eligible:
+        rn = r["row_number"]
+        base = {
+            "row_number": rn,
+            "id": r["values"][ID_COLUMN_INDEX].strip(),
+            "name": cell(r, i_name),
+            "product": cell(r, i_product),
+            "transfer_company": cell(r, i_tcomp),
+            "fund": cell(r, i_fund),
+            "current_status": cell(r, i_status),
+        }
+        found = cands.get(rn, [])
+        if not found:
+            if rid in by_id:
+                base.update(level="nomatch", kind="", text="", amount=0,
+                            note="ת.ז קיימת בדוח אבל אף מספר חשבון לא תאם" if base["fund"]
+                            else "בשורה באתר אין מספר קופה מעבירה",
+                            report=[_rep_view(x) for x in by_id[rid]])
+                items.append(base)
+            else:
+                stats["id_not_in_report"] += 1
+            continue
+
+        done = [f for f in found if f[1] == "done"]
+        pending = [f for f in found if f[1] == "pending"]
+        reject = [f for f in found if f[1] == "reject"]
+        none_ = [f for f in found if f[1] == "none"]
+        report_view = [_rep_view(f[0]) for f in found]
+        level, kind, text, amount, note = "ok", "", "", 0, ""
+
+        if done:
+            kind, text = "done", DONE_TEXT
+            amount = round(sum(f[3] for f in done), 2)
+            shared = [f for f in done if len(usage.get(f[0]["_n"], [])) > 1]
+            if shared:
+                level, kind, text, amount = "review", "", "", 0
+                note = "שורת דוח אחת מתאימה ליותר משורה אחת באתר – לא ניתן לשייך סכום. לבדיקה ידנית"
+            elif len(done) > 1:
+                level = "warn"
+                note = f"סכום של {len(done)} שורות בדוח עם אותו חשבון: " + " + ".join(
+                    fmt_amount(f[3]) for f in done)
+        elif pending:
+            texts = {f[2] for f in pending}
+            if len(texts) > 1:
+                level, note = "review", "בדוח כמה סטטוסים שונים לאותו חשבון: " + " / ".join(sorted(texts))
+            else:
+                kind, text = "pending", pending[0][2]
+                if len(pending) > 1:
+                    level, note = "warn", f"{len(pending)} שורות בדוח עם אותו סטטוס"
+        elif reject:
+            texts = {f[2] for f in reject}
+            if len(texts) > 1:
+                level, note = "review", "כמה דחיות שונות לאותו חשבון: " + " / ".join(sorted(texts))
+            else:
+                kind, text = "reject", reject[0][2]
+                if len(reject) > 1:
+                    level, note = "warn", f"{len(reject)} שורות דחייה זהות בדוח"
+        else:
+            level = "review"
+            note = "נמצאה התאמה, אבל אין בדוח סכום בפועל וגם הסטטוס אינו אחד מהמוגדרים – אין מה לעדכן"
+
+        # a mix of outcomes (e.g. one fund moved, another rejected) deserves a look
+        if level == "ok" and kind and (len({f[1] for f in found if f[1] != "none"}) > 1):
+            level = "warn"
+            note = "בדוח יש גם שורות מסוג אחר לאותו חשבון (למשל דחייה לצד ניוד שבוצע) – נבחר הניוד שבוצע"
+
+        if kind and last_status_text(base["current_status"]) == text:
+            level, note = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב"
+            kind = ""
+
+        base.update(level=level, kind=kind, text=text, amount=amount, note=note, report=report_view)
+        items.append(base)
+
+    items.sort(key=lambda x: x["row_number"])
+    stats["will_write"] = sum(1 for x in items if x["level"] in ("ok", "warn") and x["kind"])
+    return {"items": items, "stats": stats}
+
+
+def _rep_view(rep):
+    return {
+        "name": rep.get("name", ""),
+        "acc": rep.get("acc", ""),
+        "amount": rep.get("amount", ""),
+        "transfer_status": rep.get("transfer_status", ""),
+        "join_status": rep.get("join_status", ""),
+        "reject_desc": rep.get("reject_desc", ""),
+    }
+
+
+def apply_daily_updates(items, today):
+    """Writes ONLY the chosen cells, after re-reading the sheet and re-checking
+    every safety condition. Returns a per-row result list."""
+    sheet_info = resolve_sheet("pension")
+    title = sheet_info["title"]
+    headers, rows = fetch_sheet("pension")
+    by_row = {r["row_number"]: r for r in rows}
+
+    def idx(name):
+        return headers.index(name) if name in headers else -1
+
+    i_status, i_actual, i_last = idx(H_STATUS), idx(H_TRANSFER_ACTUAL), idx(H_LAST_UPDATE)
+    if min(i_status, i_actual, i_last) == -1:
+        raise RuntimeError("חסרה אחת העמודות: סטטוס הפקה / ניוד בפועל / תאריך עדכון אחרון")
+
+    results, data = [], []
+    for it in items:
+        rn = it.get("row_number")
+        res = {"row_number": rn, "name": it.get("name", ""), "ok": False, "msg": ""}
+        results.append(res)
+        r = by_row.get(rn)
+        text = (it.get("text") or "").strip()
+        kind = it.get("kind")
+        if not r or not text or kind not in ("done", "pending", "reject"):
+            res["msg"] = "נתונים לא תקינים / השורה לא נמצאה"
+            continue
+        if norm_id(r["values"][ID_COLUMN_INDEX]) != norm_id(it.get("id", "")):
+            res["msg"] = "הת.ז בשורה השתנתה מאז התצוגה המקדימה – לא נכתב"
+            continue
+        if (r["values"][i_actual] or "").strip():
+            res["msg"] = "כבר יש ערך בניוד בפועל – לא נכתב"
+            continue
+        if r["is_green"] or r["is_red"]:
+            res["msg"] = "השורה צבועה – לא נכתב"
+            continue
+        existing = r["values"][i_status] or ""
+        if last_status_text(existing) == text:
+            res["msg"] = "הסטטוס כבר רשום – לא נכתב"
+            continue
+        new_status = (existing.rstrip() + "\n" if existing.strip() else "") + f"{today}-{text}"
+        cells = [(i_status, new_status), (i_last, today)]
+        if kind == "done":
+            amount = parse_amount(str(it.get("amount", "")))
+            if amount <= 0:
+                res["msg"] = "סכום לא תקין – לא נכתב"
+                continue
+            cells.append((i_actual, fmt_amount(amount)))
+        for ci, val in cells:
+            data.append({"range": f"'{title}'!{col_letter(ci + 1)}{rn}", "values": [[val]]})
+        res["ok"], res["msg"] = True, "נכתב"
+    if data:
+        _api_values_batch_update(data)
+    return results
+
+
 # ---------- Auth ----------
 
 
@@ -578,6 +890,49 @@ def api_delete_row():
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
+
+
+@app.route("/api/daily/preview", methods=["POST"])
+@login_required
+def api_daily_preview():
+    """Dry run: reads the sheet, decides what would be written, writes NOTHING."""
+    data = request.get_json(force=True)
+    company = data.get("company")
+    rows = data.get("rows")
+    if company not in DAILY_COMPANIES:
+        return jsonify({"error": "חברה לא נתמכת"}), 400
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"error": "לא התקבלו שורות מהדוח"}), 400
+    try:
+        headers, sheet_rows = fetch_sheet("pension")
+        lock = pilot_lock()
+        pilot = sorted(lock) if lock else data.get("pilot_ids")
+        result = plan_daily_updates(company, rows, headers, sheet_rows, pilot)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    result["stats"]["pilot_locked"] = sorted(lock)
+    result["stats"]["report_rows"] = len(rows)
+    return jsonify(result)
+
+
+@app.route("/api/daily/apply", methods=["POST"])
+@login_required
+def api_daily_apply():
+    data = request.get_json(force=True)
+    items = data.get("items")
+    today = (data.get("today") or "").strip()
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "לא נבחרו שורות"}), 400
+    if not re.match(r"^\d{2}/\d{2}/\d{4}$", today):
+        return jsonify({"error": "תאריך לא תקין"}), 400
+    lock = pilot_lock()
+    if lock and any(norm_id(it.get("id", "")) not in lock for it in items):
+        return jsonify({"error": "מצב פיילוט: מותר לעדכן רק את הת.ז שהוגדרו לפיילוט"}), 403
+    try:
+        results = apply_daily_updates(items, today)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"results": results})
 
 
 if __name__ == "__main__":
