@@ -7,6 +7,26 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  #daily-panel textarea.tz-input{resize:vertical;font-family:inherit}
+  .dl-note{font-size:13px;color:var(--ink-soft,#666);margin:8px 0}
+  .dl-bad{color:#b3261e;font-weight:600;margin:8px 0}
+  .dl-sum{background:var(--paper,#f6f3ee);border:1.5px solid var(--line,#ddd);border-radius:10px;padding:12px;margin:8px 0;font-size:14px;line-height:1.7}
+  .dl-actions{display:flex;gap:8px;margin:10px 0}.dl-actions .action-btn{flex:1}
+  .dl-legend{font-size:12px;color:var(--ink-soft,#666);margin-bottom:8px}
+  .dl-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 2px}
+  .dl-dot.ok{background:#2e9e4f}.dl-dot.warn{background:#e0a800}
+  .dl-card{border:1.5px solid var(--line,#ddd);border-right-width:6px;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:13.5px;background:#fff}
+  .dl-card.dl-ok{border-right-color:#2e9e4f}.dl-card.dl-warn{border-right-color:#e0a800}.dl-card.dl-gray{border-right-color:#999}
+  .dl-head{display:flex;gap:10px;align-items:flex-start;font-size:14px}
+  .dl-head input{width:22px;height:22px;flex:none;margin-top:2px}
+  .dl-meta{color:var(--ink-soft,#666);margin:4px 0}
+  .dl-notebox{background:#fff6d6;border-radius:6px;padding:6px 8px;margin:6px 0}
+  .dl-write{background:#eaf6ee;border-radius:6px;padding:6px 8px;margin:6px 0;line-height:1.7}
+  .dl-rep{font-size:12px;color:#555;margin-top:3px;word-break:break-word}
+  .dl-group{margin-top:12px}.dl-group summary{cursor:pointer;font-weight:700;padding:8px 0}
+  .dl-res{padding:5px 0;font-size:13.5px}.dl-res.ok{color:#1c7a3a}.dl-res.bad{color:#b3261e;font-weight:600}
+</style>
 </head>
 <body>
   <header class="topbar">
@@ -60,6 +80,28 @@
         <span class="action-title">דוחות</span>
         <span class="action-sub">ניוד בפועל וצפי ניוד לפי חודש ומוצר (פנסיוני)</span>
       </button>
+      <button type="button" class="action-btn" id="btn-daily" style="margin-top: 10px; width: 100%;">
+        <span class="action-title">העלאת דוח יומי</span>
+        <span class="action-sub">עדכון ניודים מקובץ אקסל של חברה (פיילוט – מיטב)</span>
+      </button>
+    </section>
+
+    <section class="panel" id="daily-panel" hidden>
+      <label class="field-label" for="daily-company">חברה</label>
+      <select id="daily-company" class="tz-input"></select>
+
+      <label class="field-label" for="daily-file" style="margin-top: 14px;">קובץ הדוח היומי (xlsx)</label>
+      <input id="daily-file" class="tz-input" type="file" accept=".xlsx,.xlsm,.xls">
+      <div id="daily-file-info" class="dl-note"></div>
+
+      <label class="field-label" for="daily-pilot" style="margin-top: 14px;">פיילוט – רק ת.ז האלה (אופציונלי, ריק = כל הדוח)</label>
+      <textarea id="daily-pilot" class="tz-input" rows="2" placeholder="ת.ז אחת בכל שורה או מופרדות בפסיק"></textarea>
+
+      <button type="button" class="action-btn primary" id="daily-preview" style="margin-top: 12px; width: 100%;">
+        <span class="action-title">בדיקה – ללא כתיבה</span>
+        <span class="action-sub">מציג מה היה נכתב, ואתה מסמן מה לעדכן</span>
+      </button>
+      <div id="daily-output" style="margin-top: 14px;"></div>
     </section>
 
     <section class="panel" id="reports-panel" hidden>
@@ -119,6 +161,8 @@
 
   <div class="toast" id="toast" hidden></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <script src="{{ url_for('static', filename='daily.js') }}"></script>
 </body>
 </html>
