@@ -78,6 +78,7 @@
   btnOpen.addEventListener("click", () => {
     hideOthers();
     panel.hidden = !panel.hidden;
+    if (!panel.hidden) panel.scrollIntoView({ behavior: "smooth", block: "start" });
   });
   ["btn-update", "btn-view", "btn-reports", "btn-create-row"].forEach((id) => {
     const b = $(id);
@@ -91,6 +92,7 @@
     fileInfo.textContent = "";
     const f = fileInput.files && fileInput.files[0];
     if (!f) return;
+    fileInfo.textContent = "קורא את הקובץ…";
     if (typeof XLSX === "undefined") {
       fileInfo.innerHTML = '<span class="dl-bad">ספריית האקסל לא נטענה (בדוק חיבור לאינטרנט) ורענן את הדף.</span>';
       return;
@@ -152,7 +154,11 @@
 
   // ---------- שלב 1: בדיקה (בלי כתיבה) ----------
   btnPreview.addEventListener("click", async () => {
-    if (!parsedRows) { toast("קודם בחר קובץ דוח תקין", true); return; }
+    if (!parsedRows) {
+      out.innerHTML = '<div class="dl-bad">קודם יש לבחור קובץ דוח (xlsx) בשדה "קובץ הדוח היומי" למעלה.</div>';
+      toast("קודם בחר קובץ דוח תקין", true);
+      return;
+    }
     const pilot = pilotInput.value.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
     lastToday = todayStr();
     applied = false;
