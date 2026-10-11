@@ -396,6 +396,9 @@ DAILY_COMPANIES = {
         "site_company": "מיטב",  # substring that must appear in the site's 'חברה' column
         "pending_statuses": ["ממתין להפקדה ראשונה", "בתהליך קליטת סדין"],
         "reject_word": "דחייה",
+        "joined_word": "הקופה נפתחה",
+        "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
+        "join_only_request": "הצטרפות",  # 'סוג בקשה' of a join-without-transfer row
     }
 }
 
@@ -469,6 +472,30 @@ def last_status_text(status_cell):
     return re.sub(r"^\d{1,2}/\d{1,2}/\d{2,4}\s*-\s*", "", lines[-1]).strip()
 
 
+def norm_product(s):
+    """'הצטרפות לקרן השתלמות עם ניוד' / 'קרן השתלמות' -> 'קרןהשתלמות'"""
+    t = re.sub(r"הצטרפות|עם ניוד", " ", s or "").strip()
+    t = norm_acc(t)
+    return t[1:] if t.startswith("ל") and len(t) > 3 else t
+
+
+def classify_join_row(r, cfg):
+    """Join-only report row -> status text (or '' when there is nothing to write)."""
+    st = (r.get("join_status") or "").strip()
+    if not st:
+        return ""
+    if st == cfg["reject_word"]:
+        desc = (r.get("reject_desc") or "").strip()
+        detail = (r.get("reject_detail") or "").strip()
+        text = st + (" " + desc if desc else "")
+        if detail and desc == "אחר":
+            text += " - " + detail
+        return text
+    if st == cfg["joined_word"] and (r.get("deposit_date") or "").strip():
+        return cfg["joined_deposit_text"]
+    return st
+
+
 def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=None):
     """Pure function: decides what WOULD be written. Never touches Google.
 
@@ -530,10 +557,19 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
     for r, rid in eligible:
         fund = cell(r, i_fund)
         found = []
+        site_prod = norm_product(cell(r, i_product))
         for rep in by_id.get(rid, []):
-            if fund and accounts_match(fund, rep.get("acc", "")):
-                kind, text, amount = classify_report_row(rep, cfg)
-                found.append((rep, kind, text, amount))
+            if fund:
+                if accounts_match(fund, rep.get("acc", "")):
+                    kind, text, amount = classify_report_row(rep, cfg)
+                    found.append((rep, kind, text, amount))
+            else:
+                # no transfer fund number on the site => a join-only production
+                req = norm_acc(rep.get("request_type", ""))
+                is_join = (req == norm_acc(cfg["join_only_request"])) if req else not norm_acc(rep.get("acc", ""))
+                rep_prod = norm_product(rep.get("product", ""))
+                if is_join and (not rep_prod or not site_prod or rep_prod == site_prod):
+                    found.append((rep, "join", classify_join_row(rep, cfg), 0))
         cands[r["row_number"]] = found
         for rep, *_ in found:
             usage.setdefault(rep["_n"], []).append(r["row_number"])
@@ -555,11 +591,33 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             if rid in by_id:
                 base.update(level="nomatch", kind="", text="", amount=0,
                             note="ת.ז קיימת בדוח אבל אף מספר חשבון לא תאם" if base["fund"]
-                            else "בשורה באתר אין מספר קופה מעבירה",
+                            else "אין מספר קופה מעבירה (הצטרפות בלבד), ובדוח אין הצטרפות עם אותו סוג מוצר",
                             report=[_rep_view(x) for x in by_id[rid]])
                 items.append(base)
             else:
                 stats["id_not_in_report"] += 1
+            continue
+
+        if not base["fund"]:
+            texts = {f[2] for f in found}
+            report_view = [_rep_view(f[0]) for f in found]
+            if texts == {""}:
+                level, note = "review", "נמצאה הצטרפות בדוח אבל אין בה סטטוס בהצטרפות – אין מה לעדכן"
+                kind, text = "", ""
+            elif len(texts) > 1:
+                level, note = "review", "כמה שורות הצטרפות שונות לאותה ת.ז ולאותו מוצר: " + " / ".join(sorted(t for t in texts if t))
+                kind, text = "", ""
+            else:
+                kind, text = "join", texts.pop()
+                level, note = "ok", ""
+                if len(found) > 1:
+                    level, note = "warn", f"{len(found)} שורות הצטרפות זהות בדוח"
+                elif any(len(usage.get(f[0]["_n"], [])) > 1 for f in found):
+                    level, note = "warn", "שורת דוח אחת מתאימה ליותר משורה אחת באתר (אותו מוצר)"
+                if last_status_text(base["current_status"]) == text:
+                    level, note, kind = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב", ""
+            base.update(level=level, kind=kind, text=text, amount=0, note=note, report=report_view)
+            items.append(base)
             continue
 
         done = [f for f in found if f[1] == "done"]
@@ -612,6 +670,8 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
         base.update(level=level, kind=kind, text=text, amount=amount, note=note, report=report_view)
         items.append(base)
 
+    for x in items:
+        x["green"] = bool(x.get("kind")) and should_paint_green(x["kind"], x.get("text", ""))
     items.sort(key=lambda x: x["row_number"])
     stats["will_write"] = sum(1 for x in items if x["level"] in ("ok", "warn") and x["kind"])
     return {"items": items, "stats": stats}
@@ -626,6 +686,31 @@ def _rep_view(rep):
         "join_status": rep.get("join_status", ""),
         "reject_desc": rep.get("reject_desc", ""),
     }
+
+
+def should_paint_green(kind, text):
+    """Green = 'reported/finished': a transfer with an actual amount, or a join
+    where the account was opened AND the first deposit was made."""
+    if kind == "done":
+        return True
+    return kind == "join" and any(c["joined_deposit_text"] == text for c in DAILY_COMPANIES.values())
+
+
+def paint_rows_green(rows, num_cols):
+    sheet_id = resolve_sheet("pension")["sheetId"]
+    requests_body = [
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": rn - 1, "endRowIndex": rn,
+                          "startColumnIndex": 0, "endColumnIndex": num_cols},
+                "cell": {"userEnteredFormat": {"backgroundColorStyle": {"rgbColor": GREEN_RGB}}},
+                "fields": "userEnteredFormat.backgroundColorStyle",
+            }
+        }
+        for rn in rows
+    ]
+    if requests_body:
+        _api_batch_update(requests_body)
 
 
 def apply_daily_updates(items, today):
@@ -643,7 +728,7 @@ def apply_daily_updates(items, today):
     if min(i_status, i_actual, i_last) == -1:
         raise RuntimeError("חסרה אחת העמודות: סטטוס הפקה / ניוד בפועל / תאריך עדכון אחרון")
 
-    results, data = [], []
+    results, data, green_rows = [], [], []
     for it in items:
         rn = it.get("row_number")
         res = {"row_number": rn, "name": it.get("name", ""), "ok": False, "msg": ""}
@@ -651,7 +736,7 @@ def apply_daily_updates(items, today):
         r = by_row.get(rn)
         text = (it.get("text") or "").strip()
         kind = it.get("kind")
-        if not r or not text or kind not in ("done", "pending", "reject"):
+        if not r or not text or kind not in ("done", "pending", "reject", "join"):
             res["msg"] = "נתונים לא תקינים / השורה לא נמצאה"
             continue
         if norm_id(r["values"][ID_COLUMN_INDEX]) != norm_id(it.get("id", "")):
@@ -678,8 +763,14 @@ def apply_daily_updates(items, today):
         for ci, val in cells:
             data.append({"range": f"'{title}'!{col_letter(ci + 1)}{rn}", "values": [[val]]})
         res["ok"], res["msg"] = True, "נכתב"
+        if should_paint_green(kind, text):
+            green_rows.append(rn)
+            res["msg"] = "נכתב וצבוע בירוק"
     if data:
         _api_values_batch_update(data)
+    if green_rows:
+        # separate call, AFTER the values (a value write must not undo the colour)
+        paint_rows_green(green_rows, len(headers))
     return results
 
 
