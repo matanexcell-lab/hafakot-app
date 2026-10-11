@@ -21,6 +21,9 @@
         join_status: "סטטוס בהצטרפות",
         reject_desc: "תיאור הדחייה",
         reject_detail: "פירוט הדחייה",
+        request_type: "סוג בקשה",
+        product: "סוג מוצר",
+        deposit_date: "תאריך הפקדה ראשונה",
       },
       required: ["id", "acc", "amount", "transfer_status", "join_status", "reject_desc"],
     },
@@ -145,6 +148,7 @@
         id, name: get("name"), acc: get("acc"), amount: get("amount"),
         transfer_status: get("transfer_status"), join_status: get("join_status"),
         reject_desc: get("reject_desc"), reject_detail: get("reject_detail"),
+        request_type: get("request_type"), product: get("product"), deposit_date: get("deposit_date"),
       });
     }
     if (!rows.length) throw new Error("לא נמצאו שורות נתונים מתחת לשורת הכותרות");
@@ -185,6 +189,7 @@
     const writes = it.kind
       ? `<div class="dl-write">ייכתב בסטטוס: <b>${esc(lastToday)}-${esc(it.text)}</b>` +
         (it.kind === "done" ? `<br>ניוד בפועל: <b>${esc(it.amount)}</b>` : "") +
+        (it.green ? `<br><b>השורה תיצבע בירוק</b>` : "") +
         `<br>תאריך עדכון אחרון: <b>${esc(lastToday)}</b></div>`
       : "";
     const rep = (it.report || []).map((r) =>
