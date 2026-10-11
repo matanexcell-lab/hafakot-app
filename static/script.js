@@ -597,10 +597,32 @@ Line: ${e.lineno}:${e.colno}</div>`
     // Months: only months that actually appear in this metric's data.
     const months = (reportData && reportData[reportKind] ? reportData[reportKind] : []).map((e) => e.month);
     const prevMonth = reportMonthSelect.value;
-    reportMonthSelect.innerHTML =
-      `<option value="">בחר חודש…</option>` +
-      months.map((m) => `<option value="${m}">${formatMonthKey(m)}</option>`).join("");
-    if (months.includes(prevMonth)) reportMonthSelect.value = prevMonth;
+    const years = [...new Set(months.map((m) => m.split("-")[0]))].sort().reverse();
+    const periodOptions = [`<option value="">בחר חודש / שנה…</option>`];
+    if (years.length) {
+      periodOptions.push(`<optgroup label="שנים">`);
+      periodOptions.push(`<option value="all">כל התקופה (כל השנים)</option>`);
+      years.forEach((y) => periodOptions.push(`<option value="year:${y}">שנת ${y} (כל החודשים)</option>`));
+      periodOptions.push(`</optgroup><optgroup label="חודשים">`);
+    }
+    months.forEach((m) => periodOptions.push(`<option value="${m}">${formatMonthKey(m)}</option>`));
+    if (years.length) periodOptions.push(`</optgroup>`);
+    reportMonthSelect.innerHTML = periodOptions.join("");
+    const validValues = [...months, "all", ...years.map((y) => `year:${y}`)];
+    if (validValues.includes(prevMonth)) reportMonthSelect.value = prevMonth;
+  }
+
+  function periodLabel(value) {
+    if (value === "all") return "כל התקופה";
+    if (value.startsWith("year:")) return `שנת ${value.slice(5)}`;
+    return formatMonthKey(value);
+  }
+
+  function entriesForPeriod(value) {
+    const all = reportData[reportKind] || [];
+    if (value === "all") return all;
+    if (value.startsWith("year:")) return all.filter((e) => e.month.startsWith(value.slice(5) + "-"));
+    return all.filter((e) => e.month === value);
   }
 
   function updateReportResult() {
@@ -608,23 +630,23 @@ Line: ${e.lineno}:${e.colno}</div>`
     const month = reportMonthSelect.value;
     if (!product || !month) {
       reportResultNumber.textContent = "—";
-      reportResultLabel.textContent = "בחר מוצר וחודש";
+      reportResultLabel.textContent = "בחר מוצר וחודש / שנה";
       return;
     }
-    const monthEntry = (reportData[reportKind] || []).find((e) => e.month === month);
+    const entries = entriesForPeriod(month);
     let sum = 0;
     let productLabel = product;
-    if (monthEntry) {
-      if (product === REPORT_PRODUCT_GROUP_VALUE) {
-        sum = REPORT_PRODUCT_GROUP_ITEMS.reduce((acc, p) => acc + (monthEntry.products[p] || 0), 0);
-        productLabel = REPORT_PRODUCT_GROUP_LABEL;
-      } else {
-        sum = monthEntry.products[product] || 0;
-      }
+    if (product === REPORT_PRODUCT_GROUP_VALUE) {
+      productLabel = REPORT_PRODUCT_GROUP_LABEL;
+      entries.forEach((en) => {
+        sum += REPORT_PRODUCT_GROUP_ITEMS.reduce((acc, p) => acc + (en.products[p] || 0), 0);
+      });
+    } else {
+      entries.forEach((en) => { sum += en.products[product] || 0; });
     }
     reportResultNumber.textContent = sum.toLocaleString("he-IL");
     const kindLabel = reportKind === "actual" ? "ניוד בפועל" : "צפי ניוד";
-    reportResultLabel.textContent = `${kindLabel} · ${productLabel} · ${formatMonthKey(month)}`;
+    reportResultLabel.textContent = `${kindLabel} · ${productLabel} · ${periodLabel(month)}`;
   }
 
   function openCreateModal(headers) {
