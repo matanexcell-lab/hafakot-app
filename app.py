@@ -556,6 +556,8 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
     usage = {}  # report row n -> list of site row numbers that matched it
     for r, rid in eligible:
         fund = cell(r, i_fund)
+        if not re.search(r"\d", fund):
+            fund = ""  # e.g. "אין ניוד" = no transfer account => join-only
         found = []
         site_prod = norm_product(cell(r, i_product))
         for rep in by_id.get(rid, []):
@@ -584,13 +586,14 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             "product": cell(r, i_product),
             "transfer_company": cell(r, i_tcomp),
             "fund": cell(r, i_fund),
+            "has_fund": bool(re.search(r"\d", cell(r, i_fund))),
             "current_status": cell(r, i_status),
         }
         found = cands.get(rn, [])
         if not found:
             if rid in by_id:
                 base.update(level="nomatch", kind="", text="", amount=0,
-                            note="ת.ז קיימת בדוח אבל אף מספר חשבון לא תאם" if base["fund"]
+                            note="ת.ז קיימת בדוח אבל אף מספר חשבון לא תאם" if base["has_fund"]
                             else "אין מספר קופה מעבירה (הצטרפות בלבד), ובדוח אין הצטרפות עם אותו סוג מוצר",
                             report=[_rep_view(x) for x in by_id[rid]])
                 items.append(base)
@@ -598,7 +601,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 stats["id_not_in_report"] += 1
             continue
 
-        if not base["fund"]:
+        if not base["has_fund"]:
             texts = {f[2] for f in found}
             report_view = [_rep_view(f[0]) for f in found]
             if texts == {""}:
