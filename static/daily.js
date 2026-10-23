@@ -25,7 +25,9 @@
         product: "סוג מוצר",
         deposit_date: "תאריך הפקדה ראשונה",
       },
-      required: ["id", "acc", "amount", "transfer_status", "join_status", "reject_desc"],
+      // רק אלה חובה. אם אין בדוח עמודת "מס' חשבון מעביר" וכד' (למשל דוח של הצטרפויות בלבד) –
+      // ממשיכים, ורק ניודים לא יותאמו.
+      required: ["id", "join_status"],
     },
   };
 
@@ -120,14 +122,14 @@
     const grid = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: "" });
 
     // איתור שורת הכותרות (מחפשים שורה שמכילה גם ת.ז וגם מס' חשבון מעביר)
-    const needIdn = norm(ad.headers.id), needAccN = norm(ad.headers.acc);
+    const needIdn = norm(ad.headers.id), needAccN = norm(ad.headers.join_status);
     let headerRow = -1;
     for (let i = 0; i < Math.min(grid.length, 30); i++) {
       const cells = grid[i].map(norm);
       if (cells.includes(needIdn) && cells.includes(needAccN)) { headerRow = i; break; }
     }
     if (headerRow === -1) {
-      throw new Error(`לא נמצאה שורת כותרות עם "${ad.headers.id}" ו"${ad.headers.acc}" בגיליון "${sheetName}"`);
+      throw new Error(`לא נמצאה שורת כותרות עם "${ad.headers.id}" ו"${ad.headers.join_status}" בגיליון "${sheetName}"`);
     }
     const hcells = grid[headerRow].map(norm);
     const col = {};
@@ -152,7 +154,9 @@
       });
     }
     if (!rows.length) throw new Error("לא נמצאו שורות נתונים מתחת לשורת הכותרות");
-    fileInfo.innerHTML = `✓ נקראו <b>${rows.length}</b> שורות מהגיליון "${esc(sheetName)}" (כותרות בשורה ${headerRow + 1})`;
+    const absent = ["acc", "amount", "transfer_status"].filter((k) => col[k] === undefined).map((k) => ad.headers[k]);
+    fileInfo.innerHTML = `✓ נקראו <b>${rows.length}</b> שורות מהגיליון "${esc(sheetName)}" (כותרות בשורה ${headerRow + 1})` +
+      (absent.length ? `<br><span class="dl-bad">שים לב: בדוח אין העמודות: ${esc(absent.join(", "))} – ניודים לא יותאמו, רק הצטרפויות.</span>` : "");
     return rows;
   }
 
