@@ -398,6 +398,7 @@ DAILY_COMPANIES = {
         "reject_word": "דחייה",
         "joined_word": "הקופה נפתחה",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
+        "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",  # 'סוג בקשה' of a join-without-transfer row
     }
 }
@@ -474,9 +475,16 @@ def last_status_text(status_cell):
 
 def norm_product(s):
     """'הצטרפות לקרן השתלמות עם ניוד' / 'קרן השתלמות' -> 'קרןהשתלמות'"""
-    t = re.sub(r"הצטרפות|עם ניוד", " ", s or "").strip()
+    t = re.sub(r"הצטרפות|עם ניוד|מיטב", " ", s or "").strip()
     t = norm_acc(t)
     return t[1:] if t.startswith("ל") and len(t) > 3 else t
+
+
+PRODUCT_KEYWORDS = ("קרןהשתלמות", "קופתגמל", "פנסיה")
+
+
+def product_is_known(norm_prod):
+    return any(k in norm_prod for k in PRODUCT_KEYWORDS)
 
 
 def classify_join_row(r, cfg):
@@ -491,8 +499,10 @@ def classify_join_row(r, cfg):
         if detail and desc == "אחר":
             text += " - " + detail
         return text
-    if st == cfg["joined_word"] and (r.get("deposit_date") or "").strip():
-        return cfg["joined_deposit_text"]
+    if st == cfg["joined_word"]:
+        if (r.get("deposit_date") or "").strip():
+            return cfg["joined_deposit_text"]
+        return cfg["joined_pending_text"]
     return st
 
 
@@ -552,6 +562,23 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
     stats["eligible"] = len(eligible)
 
     # candidates per site row
+    def _is_join_rep(rep):
+        req = norm_acc(rep.get("request_type", ""))
+        return (req == norm_acc(cfg["join_only_request"])) if req else not norm_acc(rep.get("acc", ""))
+
+    # report join rows already claimed by a site row with a KNOWN product type
+    # (a vague row such as "קבלת בעלות" must not steal them)
+    claimed = set()
+    for r, rid in eligible:
+        if re.search(r"\d", cell(r, i_fund)):
+            continue
+        sp = norm_product(cell(r, i_product))
+        if not product_is_known(sp):
+            continue
+        for rep in by_id.get(rid, []):
+            if _is_join_rep(rep) and norm_product(rep.get("product", "")) == sp:
+                claimed.add(rep["_n"])
+
     cands = {}
     usage = {}  # report row n -> list of site row numbers that matched it
     for r, rid in eligible:
@@ -570,7 +597,8 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 req = norm_acc(rep.get("request_type", ""))
                 is_join = (req == norm_acc(cfg["join_only_request"])) if req else not norm_acc(rep.get("acc", ""))
                 rep_prod = norm_product(rep.get("product", ""))
-                if is_join and (not rep_prod or not site_prod or rep_prod == site_prod):
+                loose_ok = (not product_is_known(site_prod)) and rep["_n"] not in claimed
+                if is_join and (not rep_prod or not site_prod or rep_prod == site_prod or loose_ok):
                     found.append((rep, "join", classify_join_row(rep, cfg), 0))
         cands[r["row_number"]] = found
         for rep, *_ in found:
@@ -613,8 +641,10 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             else:
                 kind, text = "join", texts.pop()
                 level, note = "ok", ""
+                if not product_is_known(norm_product(base["product"])):
+                    level, note = "warn", "סוג המוצר באתר (" + base["product"] + ") לא מזוהה כגמל/השתלמות/פנסיה – ההתאמה לפי ת.ז בלבד. בדוק לפני סימון"
                 if len(found) > 1:
-                    level, note = "warn", f"{len(found)} שורות הצטרפות זהות בדוח"
+                    level, note = "warn", (note + " · " if note else "") + f"{len(found)} שורות הצטרפות זהות בדוח"
                 elif any(len(usage.get(f[0]["_n"], [])) > 1 for f in found):
                     level, note = "warn", "שורת דוח אחת מתאימה ליותר משורה אחת באתר (אותו מוצר)"
                 if last_status_text(base["current_status"]) == text:
