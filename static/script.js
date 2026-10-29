@@ -411,6 +411,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     const product = getVal(headers, row, H_PRODUCT);
     const transferCompany = getVal(headers, row, H_TRANSFER_COMPANY);
     const transferFundNumber = getVal(headers, row, H_TRANSFER_FUND_NUMBER);
+    const transferExpected = getVal(headers, row, H_TRANSFER_EXPECTED);
     const lastUpdate = getVal(headers, row, H_LAST_UPDATE);
 
     const addField = (label, value) => {
@@ -430,6 +431,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     if (product) addField(H_PRODUCT, product);
     if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
     if (transferFundNumber) addField(H_TRANSFER_FUND_NUMBER, transferFundNumber);
+    if (transferExpected) addField(H_TRANSFER_EXPECTED, transferExpected);
     if (lastUpdate) addField(H_LAST_UPDATE, lastUpdate);
 
     body.appendChild(fields);
