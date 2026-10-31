@@ -337,15 +337,28 @@ def parse_month_key(date_str):
     return f"{year:04d}-{month:02d}"
 
 
-def build_report():
-    """Aggregates, by month (from the 'תאריך' column) and product, the SUM
-    of the numeric values in ניוד בפועל and ניוד צפוי (not a row count)."""
-    headers, rows = fetch_sheet("pension")
+# 'פרט' tab: premium columns are fixed by letter, as requested
+DETAIL_EXPECTED_COL = 7  # column H  - צפי פרמיה
+DETAIL_ACTUAL_COL = 9    # column J  - פרמיה בפועל
+
+
+def build_report(sheet_type="pension"):
+    """Aggregates, by month (from the 'תאריך' column) and product, the SUM of the
+    numeric values (not a row count).
+    pension: ניוד בפועל / ניוד צפוי (by header).  detail: פרמיה בפועל (J) / צפי פרמיה (H)."""
+    headers, rows = fetch_sheet(sheet_type)
 
     date_idx = headers.index(H_DATE) if H_DATE in headers else -1
-    actual_idx = headers.index(H_TRANSFER_ACTUAL) if H_TRANSFER_ACTUAL in headers else -1
-    potential_idx = headers.index(H_TRANSFER_EXPECTED) if H_TRANSFER_EXPECTED in headers else -1
     product_idx = headers.index(H_PRODUCT) if H_PRODUCT in headers else -1
+    if sheet_type == "detail":
+        if len(headers) <= DETAIL_ACTUAL_COL:
+            raise RuntimeError("בטאב 'פרט' אין מספיק עמודות (נדרשות עד עמודה J)")
+        actual_idx, potential_idx = DETAIL_ACTUAL_COL, DETAIL_EXPECTED_COL
+    else:
+        actual_idx = headers.index(H_TRANSFER_ACTUAL) if H_TRANSFER_ACTUAL in headers else -1
+        potential_idx = headers.index(H_TRANSFER_EXPECTED) if H_TRANSFER_EXPECTED in headers else -1
+    if date_idx == -1:
+        raise RuntimeError(f"לא נמצאה עמודה בשם '{H_DATE}' בטאב. העמודות שנמצאו: " + ", ".join(h for h in headers if h))
 
     actual_agg = {}
     potential_agg = {}
@@ -380,7 +393,14 @@ def build_report():
             result.append({"month": month_key, "products": products, "total": total})
         return result
 
-    return {"actual": to_list(actual_agg), "potential": to_list(potential_agg)}
+    return {
+        "actual": to_list(actual_agg),
+        "potential": to_list(potential_agg),
+        "columns": {
+            "actual": headers[actual_idx] if 0 <= actual_idx < len(headers) else "",
+            "potential": headers[potential_idx] if 0 <= potential_idx < len(headers) else "",
+        },
+    }
 
 
 # ---------- Daily report import (per-company adapters) ----------
@@ -947,8 +967,12 @@ def api_create_row():
 @app.route("/api/report", methods=["POST"])
 @login_required
 def api_report():
+    body = request.get_json(silent=True) or {}
+    sheet_type = body.get("sheet_type", "pension")
+    if sheet_type not in SHEET_NAMES:
+        return jsonify({"error": "סוג גיליון לא תקין"}), 400
     try:
-        data = build_report()
+        data = build_report(sheet_type)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify(data)
