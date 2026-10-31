@@ -120,6 +120,16 @@ Line: ${e.lineno}:${e.colno}</div>`
   let createModalHeaders = [];
   let reportData = null;
   let reportKind = "actual";
+  let reportSheetType = "pension";
+  const reportYtdEl = document.createElement("div");
+  reportYtdEl.style.cssText = "margin-top:14px;padding-top:12px;border-top:1.5px dashed var(--line);";
+  reportResultLabel.insertAdjacentElement("afterend", reportYtdEl);
+
+  function reportNames() {
+    return reportSheetType === "detail"
+      ? { actual: "פרמיה בפועל", potential: "צפי פרמיה" }
+      : { actual: "ניוד בפועל", potential: "צפי ניוד" };
+  }
 
   const HEBREW_MONTHS = [
     "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
@@ -132,6 +142,7 @@ Line: ${e.lineno}:${e.colno}</div>`
   }
 
   const REPORT_PRODUCT_GROUP_VALUE = "__group_non_pension__";
+  const REPORT_ALL_PRODUCTS = "__all_products__";
   const REPORT_PRODUCT_GROUP_LABEL = "גמל + השתלמות + גמל להשקעה (הכל יחד)";
   const REPORT_PRODUCT_GROUP_ITEMS = [
     "הצטרפות לקופת גמל",
@@ -552,9 +563,11 @@ Line: ${e.lineno}:${e.colno}</div>`
     emptyState.hidden = true;
     setLoading(true);
     try {
+      reportSheetType = state.sheetType;
       const res = await fetch("/api/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet_type: reportSheetType }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בטעינת הדוח");
@@ -586,13 +599,28 @@ Line: ${e.lineno}:${e.colno}</div>`
   function populateReportSelectors() {
     // Products: fixed pension product list, so the dropdown is always complete
     // even for products with zero results this month.
-    const products = PRODUCT_CONFIG.pension.options;
+    const names = reportNames();
+    const segBtns = reportsSegmentGroup.querySelectorAll(".segment");
+    if (segBtns[0]) segBtns[0].textContent = names.actual;
+    if (segBtns[1]) segBtns[1].textContent = names.potential;
+
+    let products;
+    if (reportSheetType === "detail") {
+      // configured products + any other product text that actually appears in the data
+      const seen = new Set(PRODUCT_CONFIG.detail.options);
+      ["actual", "potential"].forEach((k) => ((reportData && reportData[k]) || []).forEach((e) => Object.keys(e.products).forEach((p) => seen.add(p))));
+      products = [...seen];
+    } else {
+      products = PRODUCT_CONFIG.pension.options;
+    }
     const prevProduct = reportProductSelect.value;
+    const specialOpt = reportSheetType === "detail"
+      ? `<option value="${REPORT_ALL_PRODUCTS}">כל המוצרים יחד</option>`
+      : `<option value="${REPORT_PRODUCT_GROUP_VALUE}">${REPORT_PRODUCT_GROUP_LABEL}</option>`;
     reportProductSelect.innerHTML =
-      `<option value="">בחר מוצר…</option>` +
-      `<option value="${REPORT_PRODUCT_GROUP_VALUE}">${REPORT_PRODUCT_GROUP_LABEL}</option>` +
+      `<option value="">בחר מוצר…</option>` + specialOpt +
       products.map((p) => `<option value="${p}">${p}</option>`).join("");
-    if (prevProduct === REPORT_PRODUCT_GROUP_VALUE || products.includes(prevProduct)) {
+    if (prevProduct === REPORT_PRODUCT_GROUP_VALUE || prevProduct === REPORT_ALL_PRODUCTS || products.includes(prevProduct)) {
       reportProductSelect.value = prevProduct;
     }
 
@@ -627,28 +655,46 @@ Line: ${e.lineno}:${e.colno}</div>`
     return all.filter((e) => e.month === value);
   }
 
+  function sumFor(entries, product) {
+    let sum = 0;
+    entries.forEach((en) => {
+      if (product === REPORT_ALL_PRODUCTS) {
+        sum += Object.values(en.products).reduce((a, b) => a + b, 0);
+      } else if (product === REPORT_PRODUCT_GROUP_VALUE) {
+        sum += REPORT_PRODUCT_GROUP_ITEMS.reduce((acc, p) => acc + (en.products[p] || 0), 0);
+      } else {
+        sum += en.products[product] || 0;
+      }
+    });
+    return sum;
+  }
+
   function updateReportResult() {
     const product = reportProductSelect.value;
     const month = reportMonthSelect.value;
+    reportYtdEl.innerHTML = "";
     if (!product || !month) {
       reportResultNumber.textContent = "—";
       reportResultLabel.textContent = "בחר מוצר וחודש / שנה";
       return;
     }
-    const entries = entriesForPeriod(month);
-    let sum = 0;
-    let productLabel = product;
-    if (product === REPORT_PRODUCT_GROUP_VALUE) {
-      productLabel = REPORT_PRODUCT_GROUP_LABEL;
-      entries.forEach((en) => {
-        sum += REPORT_PRODUCT_GROUP_ITEMS.reduce((acc, p) => acc + (en.products[p] || 0), 0);
-      });
-    } else {
-      entries.forEach((en) => { sum += en.products[product] || 0; });
-    }
+    const names = reportNames();
+    const productLabel = product === REPORT_PRODUCT_GROUP_VALUE ? REPORT_PRODUCT_GROUP_LABEL
+      : product === REPORT_ALL_PRODUCTS ? "כל המוצרים יחד" : product;
+    const sum = sumFor(entriesForPeriod(month), product);
     reportResultNumber.textContent = sum.toLocaleString("he-IL");
-    const kindLabel = reportKind === "actual" ? "ניוד בפועל" : "צפי ניוד";
+    const kindLabel = names[reportKind];
     reportResultLabel.textContent = `${kindLabel} · ${productLabel} · ${periodLabel(month)}`;
+
+    // For a single month: also show the total from the start of that year up to and including it
+    if (/^\d{4}-\d{2}$/.test(month)) {
+      const year = month.slice(0, 4);
+      const ytdEntries = (reportData[reportKind] || []).filter((e) => e.month.startsWith(year + "-") && e.month <= month);
+      const ytd = sumFor(ytdEntries, product);
+      reportYtdEl.innerHTML =
+        `<div style="font-size:26px;font-weight:800;color:var(--ink);text-align:center;">${ytd.toLocaleString("he-IL")}</div>` +
+        `<div style="font-size:13px;color:var(--ink-soft);text-align:center;margin-top:4px;">${kindLabel} · מתחילת ${year} ועד ${formatMonthKey(month)} (סה"כ מצטבר)</div>`;
+    }
   }
 
   function openCreateModal(headers) {
