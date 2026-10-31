@@ -1,3 +1,4 @@
+import datetime
 import os
 import json
 import re
@@ -324,14 +325,19 @@ def parse_month_key(date_str):
     if not date_str:
         return None
     s = date_str.strip()
+    # Sheets serial number (e.g. 46115) shown as a plain number
+    if re.match(r"^\d{5}(\.\d+)?$", s):
+        d = datetime.date(1899, 12, 30) + datetime.timedelta(days=int(float(s)))
+        return f"{d.year:04d}-{d.month:02d}"
     m = re.match(r"^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$", s)
     if not m:
         return None
-    _day, month, year = m.groups()
-    month = int(month)
-    year = int(year)
+    day, month, year = m.groups()
+    day, month, year = int(day), int(month), int(year)
     if year < 100:
         year += 2000
+    if month > 12 and 1 <= day <= 12:  # typed as mm/dd/yyyy
+        month = day
     if not (1 <= month <= 12):
         return None
     return f"{year:04d}-{month:02d}"
@@ -340,6 +346,9 @@ def parse_month_key(date_str):
 # 'פרט' tab: premium columns are fixed by letter, as requested
 DETAIL_EXPECTED_COL = 7  # column H  - צפי פרמיה
 DETAIL_ACTUAL_COL = 9    # column J  - פרמיה בפועל
+# which date decides the month, per metric (detail tab, found by header text)
+DETAIL_DATE_EXPECTED = "תאריך שנשלח לחברת הביטוח"  # expected premium: month it was sent to the insurer
+DETAIL_DATE_ACTUAL = "תאריך הפקה"                  # actual premium: month it was produced
 
 
 def build_report(sheet_type="pension"):
@@ -348,42 +357,49 @@ def build_report(sheet_type="pension"):
     pension: ניוד בפועל / ניוד צפוי (by header).  detail: פרמיה בפועל (J) / צפי פרמיה (H)."""
     headers, rows = fetch_sheet(sheet_type)
 
-    date_idx = headers.index(H_DATE) if H_DATE in headers else -1
     product_idx = headers.index(H_PRODUCT) if H_PRODUCT in headers else -1
+    date_idx = headers.index(H_DATE) if H_DATE in headers else -1
+    date_idx_actual = date_idx_potential = date_idx
     if sheet_type == "detail":
         if len(headers) <= DETAIL_ACTUAL_COL:
             raise RuntimeError("בטאב 'פרט' אין מספיק עמודות (נדרשות עד עמודה J)")
         actual_idx, potential_idx = DETAIL_ACTUAL_COL, DETAIL_EXPECTED_COL
+        for need in (DETAIL_DATE_EXPECTED, DETAIL_DATE_ACTUAL):
+            if need not in headers:
+                raise RuntimeError(f"לא נמצאה עמודה בשם '{need}' בטאב פרט. העמודות שנמצאו: " + ", ".join(h for h in headers if h))
+        date_idx_potential = headers.index(DETAIL_DATE_EXPECTED)
+        date_idx_actual = headers.index(DETAIL_DATE_ACTUAL)
+        date_idx = 0  # unused placeholder, real indexes are per metric
     else:
         actual_idx = headers.index(H_TRANSFER_ACTUAL) if H_TRANSFER_ACTUAL in headers else -1
         potential_idx = headers.index(H_TRANSFER_EXPECTED) if H_TRANSFER_EXPECTED in headers else -1
-    if date_idx == -1:
+    if date_idx_actual == -1 or date_idx_potential == -1:
         raise RuntimeError(f"לא נמצאה עמודה בשם '{H_DATE}' בטאב. העמודות שנמצאו: " + ", ".join(h for h in headers if h))
 
     actual_agg = {}
     potential_agg = {}
 
+    def month_of(vals, di):
+        return parse_month_key(vals[di]) if 0 <= di < len(vals) else None
+
     for r in rows:
         vals = r["values"]
-        if date_idx == -1 or date_idx >= len(vals):
-            continue
-        month_key = parse_month_key(vals[date_idx])
-        if not month_key:
-            continue
         product = vals[product_idx].strip() if 0 <= product_idx < len(vals) else ""
         if not product:
             product = "לא צוין"
 
-        if 0 <= actual_idx < len(vals):
+        mk = month_of(vals, date_idx_actual)
+        if mk and 0 <= actual_idx < len(vals):
             amt = parse_amount(vals[actual_idx])
             if amt:
-                actual_agg.setdefault(month_key, {}).setdefault(product, 0)
-                actual_agg[month_key][product] += amt
-        if 0 <= potential_idx < len(vals):
+                actual_agg.setdefault(mk, {}).setdefault(product, 0)
+                actual_agg[mk][product] += amt
+        mk = month_of(vals, date_idx_potential)
+        if mk and 0 <= potential_idx < len(vals):
             amt = parse_amount(vals[potential_idx])
             if amt:
-                potential_agg.setdefault(month_key, {}).setdefault(product, 0)
-                potential_agg[month_key][product] += amt
+                potential_agg.setdefault(mk, {}).setdefault(product, 0)
+                potential_agg[mk][product] += amt
 
     def to_list(agg):
         result = []
