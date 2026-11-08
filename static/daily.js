@@ -51,6 +51,41 @@
         return row;
       },
     },
+    harel: {
+      label: "הראל",
+      sheetMatch: "דוח ניוד נכנס",
+      headers: {
+        id: "מספר ת.ז",
+        name: "שם משפחה",
+        first_name: "שם פרטי",
+        acc: "מספר חשבון מעביר",
+        amount: "סכום להעברה",
+        req_status: "סטטוס בקשה",
+        proc_status: "סטטוס הליך ניוד",
+        notes: "הערות",
+        target_date: "תאריך יעד לביצוע ההעברה",
+        product: "שם קופה מקבלת",
+      },
+      required: ["id", "req_status"],
+      headerKeys: ["id", "req_status"],
+      // מתרגמים את הסטטוסים של הראל לפורמט הכללי שהשרת מכיר
+      post(row, raw) {
+        row.name = [raw.name, raw.first_name].filter(Boolean).join(" ");
+        const req = norm(raw.req_status);
+        row.transfer_status = raw.proc_status || "";
+        row.expected_date = /\d/.test(raw.target_date || "") ? raw.target_date : "";
+        if (req === norm("נדחה")) {
+          row.join_status = "דחייה";
+          row.reject_desc = raw.notes || raw.proc_status || "";
+          row.transfer_status = "";
+        } else if (req === norm("בוטל")) {
+          row.join_status = "דחייה";
+          row.reject_desc = "בוטל" + (raw.notes ? " - " + raw.notes : "");
+          row.transfer_status = "";
+        }
+        return row;
+      },
+    },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -175,7 +210,9 @@
         reject_desc: get("reject_desc"), reject_detail: get("reject_detail"),
         request_type: get("request_type"), product: get("product"), deposit_date: get("deposit_date"), expected_date: get("expected_date"),
       };
-      rows.push(ad.post ? ad.post(row) : row);
+      const raw = {};
+      Object.keys(col).forEach((k) => { raw[k] = get(k); });
+      rows.push(ad.post ? ad.post(row, raw) : row);
     }
     if (!rows.length) throw new Error("לא נמצאו שורות נתונים מתחת לשורת הכותרות");
     const absent = ["acc", "amount", "transfer_status"].filter((k) => col[k] === undefined).map((k) => ad.headers[k]);
