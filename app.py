@@ -451,6 +451,19 @@ DAILY_COMPANIES = {
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",
     },
+    "harel": {
+        "label": "הראל",
+        "site_company": "הראל",  # substring that must appear in the site's 'חברה' column
+        "pending_statuses": ["ממתין להפקדה ראשונה", "ממתין להשלמת חוסרי הצטרפות"],
+        # 'ניוד בתהליך' -> "ניוד צפוי <תאריך יעד לביצוע ההעברה מהדוח>"
+        "expected_status": "ניוד בתהליך",
+        "expected_text": "ניוד צפוי",
+        "reject_word": "דחייה",
+        "joined_word": "הקופה נפתחה",
+        "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
+        "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
+        "join_only_request": "הצטרפות",
+    },
 }
 
 # PILOT LOCK: while this list is non-empty, the daily import can preview and
