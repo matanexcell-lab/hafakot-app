@@ -436,7 +436,18 @@ DAILY_COMPANIES = {
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",  # 'סוג בקשה' of a join-without-transfer row
-    }
+    },
+    "analyst": {
+        "label": "אנליסט",
+        "site_company": "אנליסט",  # substring that must appear in the site's 'חברה' column
+        "pending_statuses": ["ממתין לביצוע"],
+        # the browser adapter maps a rejected transfer ('נדחתה') to join_status = "דחייה"
+        "reject_word": "דחייה",
+        "joined_word": "הקופה נפתחה",
+        "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
+        "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
+        "join_only_request": "הצטרפות",
+    },
 }
 
 # PILOT LOCK: while this list is non-empty, the daily import can preview and
