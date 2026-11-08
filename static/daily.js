@@ -28,6 +28,27 @@
       // רק אלה חובה. אם אין בדוח עמודת "מס' חשבון מעביר" וכד' (למשל דוח של הצטרפויות בלבד) –
       // ממשיכים, ורק ניודים לא יותאמו.
       required: ["id", "join_status"],
+      headerKeys: ["id", "join_status"], // שתי כותרות שמזהות את שורת הכותרות
+    },
+    analyst: {
+      label: "אנליסט",
+      sheetMatch: "העברות פנימה",
+      headers: {
+        id: "ת.ז",
+        name: "שם מלא",
+        acc: "מספר חשבון מעביר",
+        amount: "סכום העברה בדוח",
+        transfer_status: "סטאטוס בקשה",
+        reject_desc: "סיבת ליקוי/ תקול",
+        product: "שם מסלול",
+      },
+      required: ["id", "transfer_status"],
+      headerKeys: ["id", "transfer_status"],
+      // באנליסט דחיית העברה מופיעה בסטטוס "נדחתה" – מתרגמים למה שהשרת מכיר כדחייה
+      post(row) {
+        if (norm(row.transfer_status) === norm("נדחתה")) row.join_status = "דחייה";
+        return row;
+      },
     },
   };
 
@@ -122,14 +143,15 @@
     const grid = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: "" });
 
     // איתור שורת הכותרות (מחפשים שורה שמכילה גם ת.ז וגם מס' חשבון מעביר)
-    const needIdn = norm(ad.headers.id), needAccN = norm(ad.headers.join_status);
+    const hk = ad.headerKeys || ["id", "join_status"];
+    const needIdn = norm(ad.headers[hk[0]]), needAccN = norm(ad.headers[hk[1]]);
     let headerRow = -1;
     for (let i = 0; i < Math.min(grid.length, 30); i++) {
       const cells = grid[i].map(norm);
       if (cells.includes(needIdn) && cells.includes(needAccN)) { headerRow = i; break; }
     }
     if (headerRow === -1) {
-      throw new Error(`לא נמצאה שורת כותרות עם "${ad.headers.id}" ו"${ad.headers.join_status}" בגיליון "${sheetName}"`);
+      throw new Error(`לא נמצאה שורת כותרות עם "${ad.headers[hk[0]]}" ו"${ad.headers[hk[1]]}" בגיליון "${sheetName}"`);
     }
     const hcells = grid[headerRow].map(norm);
     const col = {};
@@ -146,12 +168,13 @@
       const get = (k) => (col[k] === undefined ? "" : String(g[col[k]] == null ? "" : g[col[k]]).trim());
       const id = get("id");
       if (!id) continue;
-      rows.push({
+      const row = {
         id, name: get("name"), acc: get("acc"), amount: get("amount"),
         transfer_status: get("transfer_status"), join_status: get("join_status"),
         reject_desc: get("reject_desc"), reject_detail: get("reject_detail"),
         request_type: get("request_type"), product: get("product"), deposit_date: get("deposit_date"),
-      });
+      };
+      rows.push(ad.post ? ad.post(row) : row);
     }
     if (!rows.length) throw new Error("לא נמצאו שורות נתונים מתחת לשורת הכותרות");
     const absent = ["acc", "amount", "transfer_status"].filter((k) => col[k] === undefined).map((k) => ad.headers[k]);
@@ -223,7 +246,7 @@
       ${(s.pilot_locked && s.pilot_locked.length) ? `<div class="dl-bad">🔒 מצב פיילוט: האתר עובד רק על ת.ז ${s.pilot_locked.map(esc).join(", ")}</div>` : ""}
       <b>תוצאת בדיקה – לא נכתב כלום</b>
       <div>שורות בדוח: ${s.report_rows}${pilotCount ? ` · פיילוט על ${pilotCount} ת.ז` : ""}</div>
-      <div>שורות מיטב באתר ללא "ניוד בפועל" (נבדקו): ${s.eligible}</div>
+      <div>שורות ${esc(ADAPTERS[companySel.value].label)} באתר ללא "ניוד בפועל" (נבדקו): ${s.eligible}</div>
       <div>שורות שלא נגענו בהן כי כבר יש בהן ניוד בפועל: ${s.skipped_has_actual} · צבועות: ${s.skipped_color}</div>
       <div><b>מוכנות לעדכון: ${sel.length}</b> · לבדיקה ידנית: ${review.length} · ללא התאמה: ${nomatch.length} · דולגו: ${skip.length}</div>
     </div>`;
