@@ -588,7 +588,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
         if cfg["site_company"] not in cell(r, i_company):
             stats["skipped_other_company"] += 1
             continue
-        if cell(r, i_actual):
+        if re.search(r"\d", cell(r, i_actual)):  # text like 'אין ניוד' is not an actual transfer
             stats["skipped_has_actual"] += 1
             continue
         if r["is_green"] or r["is_red"]:
@@ -811,7 +811,7 @@ def apply_daily_updates(items, today):
         if norm_id(r["values"][ID_COLUMN_INDEX]) != norm_id(it.get("id", "")):
             res["msg"] = "הת.ז בשורה השתנתה מאז התצוגה המקדימה – לא נכתב"
             continue
-        if (r["values"][i_actual] or "").strip():
+        if re.search(r"\d", r["values"][i_actual] or ""):
             res["msg"] = "כבר יש ערך בניוד בפועל – לא נכתב"
             continue
         if r["is_green"] or r["is_red"]:
