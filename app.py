@@ -431,6 +431,9 @@ DAILY_COMPANIES = {
         "label": "מיטב",
         "site_company": "מיטב",  # substring that must appear in the site's 'חברה' column
         "pending_statuses": ["ממתין להפקדה ראשונה", "בתהליך קליטת סדין"],
+        # transfer waiting for the money: written as "ניוד צפוי <date from the report's regulatory expected-date column>"
+        "expected_status": "ממתין להעברת כספים",
+        "expected_text": "ניוד צפוי",
         "reject_word": "דחייה",
         "joined_word": "הקופה נפתחה",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
@@ -498,6 +501,9 @@ def classify_report_row(r, cfg):
     if amount > 0:
         return "done", DONE_TEXT, amount
     transfer_status = (r.get("transfer_status") or "").strip()
+    if cfg.get("expected_status") and transfer_status == cfg["expected_status"]:
+        exp_date = (r.get("expected_date") or "").strip()
+        return "pending", cfg["expected_text"] + (" " + exp_date if exp_date else ""), 0
     if transfer_status in cfg["pending_statuses"]:
         return "pending", transfer_status, 0
     if (r.get("join_status") or "").strip() == cfg["reject_word"]:
