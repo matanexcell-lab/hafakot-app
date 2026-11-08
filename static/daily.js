@@ -24,6 +24,7 @@
         request_type: "סוג בקשה",
         product: "סוג מוצר",
         deposit_date: "תאריך הפקדה ראשונה",
+        expected_date: "מועד העברת כספים צפוי - רגולטורי", // עמודה AC בדוח
       },
       // רק אלה חובה. אם אין בדוח עמודת "מס' חשבון מעביר" וכד' (למשל דוח של הצטרפויות בלבד) –
       // ממשיכים, ורק ניודים לא יותאמו.
@@ -172,7 +173,7 @@
         id, name: get("name"), acc: get("acc"), amount: get("amount"),
         transfer_status: get("transfer_status"), join_status: get("join_status"),
         reject_desc: get("reject_desc"), reject_detail: get("reject_detail"),
-        request_type: get("request_type"), product: get("product"), deposit_date: get("deposit_date"),
+        request_type: get("request_type"), product: get("product"), deposit_date: get("deposit_date"), expected_date: get("expected_date"),
       };
       rows.push(ad.post ? ad.post(row) : row);
     }
