@@ -594,7 +594,48 @@ def classify_join_row(r, cfg):
     return st
 
 
-def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=None):
+def fund_key(fund):
+    """'033-639-000445743-933-0' (a self-employed deposit track) -> '445743933' + '0': the
+    account part, shared by all the tracks of one fund. Short numbers: digits only."""
+    parts = [p for p in re.split(r"[-\s]+", (fund or "").strip()) if p]
+    if len(parts) >= 5:
+        parts = parts[2:]
+    return "-".join(re.sub(r"\D", "", p).lstrip("0") or "0" for p in parts)
+
+
+def product_kind(s):
+    n = norm_product(s)
+    for k in PRODUCT_KEYWORDS:
+        if k in n:
+            return k
+    return ""
+
+
+def deposit_info(deposits, rid, site_product):
+    """Self-employed first-deposit rule. Returns None when it does not apply, or
+    {"ok": True, "amount": sum, "count": n} / {"ok": False, "reason": text}."""
+    kind = product_kind(site_product)
+    mine = []
+    for d in deposits or []:
+        if norm_id(d.get("id", "")) != rid or (d.get("status") or "").strip() != "עצמאי":
+            continue
+        if kind and product_kind(d.get("product", "")) not in ("", kind):
+            continue
+        if parse_amount(str(d.get("amount", ""))) == 0:
+            continue
+        mine.append(d)
+    if not mine:
+        return None
+    keys = {fund_key(d.get("fund", "")) for d in mine}
+    if len(keys) > 1:
+        return {"ok": False, "reason": "הפקדות לכמה קופות שונות: " + " / ".join(sorted(keys))}
+    total = round(sum(parse_amount(str(d["amount"])) for d in mine), 2)
+    if total <= 0:
+        return {"ok": False, "reason": f"סך ההפקדות בגיליון מעקב הפקדות אינו חיובי ({fmt_amount(total)})"}
+    return {"ok": True, "amount": total, "count": len(mine)}
+
+
+def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=None, deposits=None):
     """Pure function: decides what WOULD be written. Never touches Google.
 
     Only site rows that (a) belong to the company, (b) have an empty
@@ -707,6 +748,18 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             "current_status": cell(r, i_status),
         }
         found = cands.get(rn, [])
+        if not found and not base["has_fund"]:
+            dep = deposit_info(deposits, rid, base["product"])
+            if dep and dep["ok"]:
+                text = cfg["joined_deposit_text"]
+                lvl, nt, kd = "warn", (f"עצמאי – {dep['count']} הפקדות באותה קופה בגיליון מעקב הפקדות, בסך "
+                                       f"{fmt_amount(dep['amount'])}. אין שורת הצטרפות מתאימה בדוח – בדוק לפני סימון"), "join"
+                if last_status_text(base["current_status"]) == text:
+                    lvl, nt, kd = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב", ""
+                base.update(level=lvl, kind=kd, text=text, amount=dep["amount"], note=nt,
+                            report=[_rep_view(x) for x in by_id.get(rid, [])])
+                items.append(base)
+                continue
         if not found:
             if rid in by_id:
                 base.update(level="nomatch", kind="", text="", amount=0,
@@ -738,7 +791,20 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                     level, note = "warn", "שורת דוח אחת מתאימה ליותר משורה אחת באתר (אותו מוצר)"
                 if last_status_text(base["current_status"]) == text:
                     level, note, kind = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב", ""
-            base.update(level=level, kind=kind, text=text, amount=0, note=note, report=report_view)
+            amount = 0
+            dep = deposit_info(deposits, rid, base["product"]) if kind == "join" else None
+            if dep and not text.startswith(cfg["reject_word"]):
+                if dep["ok"]:
+                    text, amount = cfg["joined_deposit_text"], dep["amount"]
+                    note = (note + " · " if note else "") + (
+                        f"עצמאי – {dep['count']} הפקדות באותה קופה בגיליון מעקב הפקדות, בסך {fmt_amount(amount)}")
+                    if level == "skip":
+                        level = "ok"
+                else:
+                    level, note = "warn", (note + " · " if note else "") + dep["reason"] + " – הסכום לא נכתב"
+            if kind == "join" and last_status_text(base["current_status"]) == text:
+                level, note, kind = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב", ""
+            base.update(level=level, kind=kind, text=text, amount=amount, note=note, report=report_view)
             items.append(base)
             continue
 
@@ -890,11 +956,11 @@ def apply_daily_updates(items, today):
             continue
         new_status = (existing.rstrip() + "\n" if existing.strip() else "") + f"{today}-{text}"
         cells = [(i_status, new_status), (i_last, today)]
-        if kind == "done":
-            amount = parse_amount(str(it.get("amount", "")))
-            if amount <= 0:
-                res["msg"] = "סכום לא תקין – לא נכתב"
-                continue
+        amount = parse_amount(str(it.get("amount", "")))
+        if kind == "done" and amount <= 0:
+            res["msg"] = "סכום לא תקין – לא נכתב"
+            continue
+        if kind == "done" or (kind == "join" and amount > 0):
             cells.append((i_actual, fmt_amount(amount)))
         for ci, val in cells:
             data.append({"range": f"'{title}'!{col_letter(ci + 1)}{rn}", "values": [[val]]})
@@ -1138,7 +1204,7 @@ def api_daily_preview():
         headers, sheet_rows = fetch_sheet("pension")
         lock = pilot_lock()
         pilot = sorted(lock) if lock else data.get("pilot_ids")
-        result = plan_daily_updates(company, rows, headers, sheet_rows, pilot)
+        result = plan_daily_updates(company, rows, headers, sheet_rows, pilot, data.get("deposits"))
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
     result["stats"]["pilot_locked"] = sorted(lock)
