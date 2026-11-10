@@ -29,6 +29,11 @@
       // ממשיכים, ורק ניודים לא יותאמו.
       required: ["id", "join_status"],
       headerKeys: ["id", "join_status"],
+      // גיליון הפקדות: לעצמאי עם הפקדות באותה קופה => הפקדה ראשונה + סכום ההפקדות
+      deposits: {
+        sheetMatch: "מעקב הפקדות",
+        headers: { id: "ת.ז", product: "סוג מוצר", fund: "מס' קופה", status: "מעמד", amount: 'סה"כ סכום הפקדה' },
+      },
     },
     harel: {
       label: "הראל",
@@ -76,6 +81,7 @@
   const out = $("daily-output");
 
   let parsedRows = null;
+  let parsedDeposits = [];
   let lastItems = [];
   let lastToday = "";
   let applied = false;
@@ -137,12 +143,41 @@
     try {
       const buf = await f.arrayBuffer();
       parsedRows = parseReport(buf, ADAPTERS[companySel.value]);
+      parsedDeposits = parseDeposits(buf, ADAPTERS[companySel.value]);
     } catch (e) {
       parsedRows = null;
       fileInfo.innerHTML = `<span class="dl-bad">${esc(e.message || e)}</span>`;
     }
   });
   companySel.addEventListener("change", () => { fileInput.value = ""; parsedRows = null; fileInfo.textContent = ""; out.innerHTML = ""; });
+
+  // גיליון "מעקב הפקדות" (אופציונלי) – מחזיר רק שורות עם ערך בסכום ההפקדה
+  function parseDeposits(buf, ad) {
+    if (!ad.deposits) return [];
+    const wb = XLSX.read(buf, { type: "array" });
+    const dsn = wb.SheetNames.find((n) => norm(n).includes(norm(ad.deposits.sheetMatch)));
+    if (!dsn) return [];
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[dsn], { header: 1, raw: false, defval: "" });
+    const H = ad.deposits.headers;
+    const need = Object.keys(H).map((k) => norm(H[k]));
+    let hr = -1;
+    for (let i = 0; i < Math.min(grid.length, 30); i++) {
+      const cells = grid[i].map(norm);
+      if (need.every((n) => cells.includes(n))) { hr = i; break; }
+    }
+    if (hr === -1) return [];
+    const hc = grid[hr].map(norm);
+    const ix = {};
+    Object.keys(H).forEach((k) => { ix[k] = hc.indexOf(norm(H[k])); });
+    const out = [];
+    for (let i = hr + 1; i < grid.length; i++) {
+      const g = grid[i];
+      const v = (k) => String(g[ix[k]] == null ? "" : g[ix[k]]).trim();
+      if (!v("id") || !v("amount")) continue;
+      out.push({ id: v("id"), product: v("product"), fund: v("fund"), status: v("status"), amount: v("amount") });
+    }
+    return out;
+  }
 
   function parseReport(buf, ad) {
     const wb = XLSX.read(buf, { type: "array" });
@@ -225,7 +260,7 @@
       const res = await fetch("/api/daily/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company: companySel.value, rows: parsedRows, pilot_ids: pilot }),
+        body: JSON.stringify({ company: companySel.value, rows: parsedRows, deposits: parsedDeposits, pilot_ids: pilot }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "שגיאה בבדיקה");
