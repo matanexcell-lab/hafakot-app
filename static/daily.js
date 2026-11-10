@@ -24,67 +24,42 @@
         request_type: "סוג בקשה",
         product: "סוג מוצר",
         deposit_date: "תאריך הפקדה ראשונה",
-        expected_date: "מועד העברת כספים צפוי - רגולטורי", // עמודה AC בדוח
       },
       // רק אלה חובה. אם אין בדוח עמודת "מס' חשבון מעביר" וכד' (למשל דוח של הצטרפויות בלבד) –
       // ממשיכים, ורק ניודים לא יותאמו.
       required: ["id", "join_status"],
-      headerKeys: ["id", "join_status"], // שתי כותרות שמזהות את שורת הכותרות
-    },
-    analyst: {
-      label: "אנליסט",
-      sheetMatch: "העברות פנימה",
-      headers: {
-        id: "ת.ז",
-        name: "שם מלא",
-        acc: "מספר חשבון מעביר",
-        amount: "סכום העברה בדוח",
-        transfer_status: "סטאטוס בקשה",
-        reject_desc: "סיבת ליקוי/ תקול",
-        product: "שם מסלול",
-      },
-      required: ["id", "transfer_status"],
-      headerKeys: ["id", "transfer_status"],
-      // באנליסט דחיית העברה מופיעה בסטטוס "נדחתה" – מתרגמים למה שהשרת מכיר כדחייה
-      post(row) {
-        if (norm(row.transfer_status) === norm("נדחתה")) row.join_status = "דחייה";
-        return row;
-      },
+      headerKeys: ["id", "join_status"],
     },
     harel: {
       label: "הראל",
-      sheetMatch: "דוח ניוד נכנס",
+      sheetMatch: "ניוד נכנס",
       headers: {
         id: "מספר ת.ז",
-        name: "שם משפחה",
-        first_name: "שם פרטי",
+        name: ["שם פרטי", "שם משפחה"],
         acc: "מספר חשבון מעביר",
         amount: "סכום להעברה",
-        req_status: "סטטוס בקשה",
-        proc_status: "סטטוס הליך ניוד",
-        notes: "הערות",
-        target_date: "תאריך יעד לביצוע ההעברה",
-        product: "שם קופה מקבלת",
+        transfer_status: "סטטוס הליך ניוד",
+        reject_desc: "הערות",
       },
-      required: ["id", "req_status"],
-      headerKeys: ["id", "req_status"],
-      // מתרגמים את הסטטוסים של הראל לפורמט הכללי שהשרת מכיר
-      post(row, raw) {
-        row.name = [raw.name, raw.first_name].filter(Boolean).join(" ");
-        const req = norm(raw.req_status);
-        row.transfer_status = raw.proc_status || "";
-        row.expected_date = /\d/.test(raw.target_date || "") ? raw.target_date : "";
-        if (req === norm("נדחה")) {
-          row.join_status = "דחייה";
-          row.reject_desc = raw.notes || raw.proc_status || "";
-          row.transfer_status = "";
-        } else if (req === norm("בוטל")) {
-          row.join_status = "דחייה";
-          row.reject_desc = "בוטל" + (raw.notes ? " - " + raw.notes : "");
-          row.transfer_status = "";
-        }
-        return row;
+      required: ["id", "transfer_status"],
+      headerKeys: ["id", "transfer_status"],
+    },
+    mor: {
+      label: "מור",
+      sheetMatch: "תהליכי ניוד",
+      headers: {
+        id: "ת ז עמית",
+        name: ["שם פרטי", "שם משפחה"],
+        acc: "מספר חשבון העמית בקופה המעבירה",
+        amount: "סכום ניוד",
+        deposit: "סכום הפקדה",
+        reject_desc: "הערות לסיבת דחייה",
+        expected_date: "תאריך צפי לקבלת כספים",
+        transfer_status: "תאור סיבת סטטוס ניוד",
       },
+      doneByDeposit: true,   // הניוד בוצע רק כשיש ערך בעמודת "סכום הפקדה"
+      required: ["id", "transfer_status"],
+      headerKeys: ["id", "transfer_status"],
     },
   };
 
@@ -179,40 +154,53 @@
     const grid = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: "" });
 
     // איתור שורת הכותרות (מחפשים שורה שמכילה גם ת.ז וגם מס' חשבון מעביר)
-    const hk = ad.headerKeys || ["id", "join_status"];
-    const needIdn = norm(ad.headers[hk[0]]), needAccN = norm(ad.headers[hk[1]]);
+    const keyNames = (ad.headerKeys || ["id", "join_status"]).map((k) => ad.headers[k]);
+    const needN = keyNames.map(norm);
     let headerRow = -1;
     for (let i = 0; i < Math.min(grid.length, 30); i++) {
       const cells = grid[i].map(norm);
-      if (cells.includes(needIdn) && cells.includes(needAccN)) { headerRow = i; break; }
+      if (needN.every((n) => cells.includes(n))) { headerRow = i; break; }
     }
     if (headerRow === -1) {
-      throw new Error(`לא נמצאה שורת כותרות עם "${ad.headers[hk[0]]}" ו"${ad.headers[hk[1]]}" בגיליון "${sheetName}"`);
+      throw new Error(`לא נמצאה שורת כותרות עם ${keyNames.map((n) => '"' + n + '"').join(" ו")} בגיליון "${sheetName}"`);
     }
     const hcells = grid[headerRow].map(norm);
     const col = {};
     const missing = [];
     Object.keys(ad.headers).forEach((k) => {
-      const i = hcells.indexOf(norm(ad.headers[k]));
-      if (i === -1) { if (ad.required.includes(k)) missing.push(ad.headers[k]); } else col[k] = i;
+      const names = Array.isArray(ad.headers[k]) ? ad.headers[k] : [ad.headers[k]];
+      const idxs = names.map((n) => hcells.indexOf(norm(n)));
+      if (idxs.includes(-1)) { if (ad.required.includes(k)) missing.push(names.join(" + ")); } else col[k] = idxs;
     });
     if (missing.length) throw new Error("חסרות כותרות בדוח: " + missing.join(", "));
 
     const rows = [];
     for (let i = headerRow + 1; i < grid.length; i++) {
       const g = grid[i];
-      const get = (k) => (col[k] === undefined ? "" : String(g[col[k]] == null ? "" : g[col[k]]).trim());
+      const get = (k) => (col[k] === undefined ? "" : col[k].map((ci) => String(g[ci] == null ? "" : g[ci]).trim()).filter(Boolean).join(" "));
       const id = get("id");
       if (!id) continue;
-      const row = {
-        id, name: get("name"), acc: get("acc"), amount: get("amount"),
+      // תאריכי ISO מהדוח (מיוצאים ב-UTC, למשל 2025-12-21T22:00) -> dd/mm/yyyy לפי שעון ישראל
+      const fmtDate = (x) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(x);
+        if (!m) return x;
+        const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] + 12, +m[5]));
+        const p = (n) => String(n).padStart(2, "0");
+        return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+      };
+      let amountVal = get("amount");
+      if (ad.doneByDeposit) {
+        const num = (x) => parseFloat(String(x).replace(/[^\d.\-]/g, "")) || 0;
+        const dep = get("deposit");
+        amountVal = num(dep) > 0 ? (num(amountVal) > 0 ? amountVal : dep) : "";
+      }
+      rows.push({
+        id, name: get("name"), acc: get("acc"), amount: amountVal,
         transfer_status: get("transfer_status"), join_status: get("join_status"),
         reject_desc: get("reject_desc"), reject_detail: get("reject_detail"),
-        request_type: get("request_type"), product: get("product"), deposit_date: get("deposit_date"), expected_date: get("expected_date"),
-      };
-      const raw = {};
-      Object.keys(col).forEach((k) => { raw[k] = get(k); });
-      rows.push(ad.post ? ad.post(row, raw) : row);
+        request_type: get("request_type"), product: get("product"), deposit_date: get("deposit_date"),
+        expected_date: fmtDate(get("expected_date")),
+      });
     }
     if (!rows.length) throw new Error("לא נמצאו שורות נתונים מתחת לשורת הכותרות");
     const absent = ["acc", "amount", "transfer_status"].filter((k) => col[k] === undefined).map((k) => ad.headers[k]);
@@ -284,7 +272,7 @@
       ${(s.pilot_locked && s.pilot_locked.length) ? `<div class="dl-bad">🔒 מצב פיילוט: האתר עובד רק על ת.ז ${s.pilot_locked.map(esc).join(", ")}</div>` : ""}
       <b>תוצאת בדיקה – לא נכתב כלום</b>
       <div>שורות בדוח: ${s.report_rows}${pilotCount ? ` · פיילוט על ${pilotCount} ת.ז` : ""}</div>
-      <div>שורות ${esc(ADAPTERS[companySel.value].label)} באתר ללא "ניוד בפועל" (נבדקו): ${s.eligible}</div>
+      <div>שורות מיטב באתר ללא "ניוד בפועל" (נבדקו): ${s.eligible}</div>
       <div>שורות שלא נגענו בהן כי כבר יש בהן ניוד בפועל: ${s.skipped_has_actual} · צבועות: ${s.skipped_color}</div>
       <div><b>מוכנות לעדכון: ${sel.length}</b> · לבדיקה ידנית: ${review.length} · ללא התאמה: ${nomatch.length} · דולגו: ${skip.length}</div>
     </div>`;
