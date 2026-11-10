@@ -431,35 +431,37 @@ DAILY_COMPANIES = {
         "label": "מיטב",
         "site_company": "מיטב",  # substring that must appear in the site's 'חברה' column
         "pending_statuses": ["ממתין להפקדה ראשונה", "בתהליך קליטת סדין"],
-        # transfer waiting for the money: written as "ניוד צפוי <date from the report's regulatory expected-date column>"
-        "expected_status": "ממתין להעברת כספים",
-        "expected_text": "ניוד צפוי",
         "reject_word": "דחייה",
         "joined_word": "הקופה נפתחה",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",  # 'סוג בקשה' of a join-without-transfer row
     },
-    "analyst": {
-        "label": "אנליסט",
-        "site_company": "אנליסט",  # substring that must appear in the site's 'חברה' column
-        "pending_statuses": ["ממתין לביצוע"],
-        # the browser adapter maps a rejected transfer ('נדחתה') to join_status = "דחייה"
+    # הראל: "דוח ניוד נכנס" - transfers only (no join rows)
+    "harel": {
+        "label": "הראל",
+        "site_company": "הראל",
+        "pending_statuses": ["ממתין להפקדה ראשונה", "ניוד בתהליך", "נשלח חוסר לבקשת הניוד",
+                             "ממתין להשלמת חוסרי הצטרפות"],
+        "pending_with_note": True,          # append the report's remark (הערות) to a pending status
         "reject_word": "דחייה",
-        "joined_word": "הקופה נפתחה",
+        "reject_transfer_statuses": ["התקבלה דחיה מקופה מעבירה"],  # -> "דחייה <הערות>"
+        "closed_statuses": ["העברה בוטלה ע\"י העמית"],              # written as-is
+        "closed_prefixes": ["בקשה נסגרה"],                          # written as-is (startswith)
+        "joined_word": "",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",
     },
-    "harel": {
-        "label": "הראל",
-        "site_company": "הראל",  # substring that must appear in the site's 'חברה' column
-        "pending_statuses": ["ממתין להפקדה ראשונה", "ממתין להשלמת חוסרי הצטרפות"],
-        # 'ניוד בתהליך' -> "ניוד צפוי <תאריך יעד לביצוע ההעברה מהדוח>"
-        "expected_status": "ניוד בתהליך",
-        "expected_text": "ניוד צפוי",
+    # מור: "מעקב יומי תהליכי ניוד והצטרפות" - amount in 'סכום ניוד' => done; any other status as-is
+    "mor": {
+        "label": "מור",
+        "site_company": "מור",
+        "pending_statuses": [],
+        "pending_any": True,                # any non-empty status text is written as-is (pending)
+        "with_expected_date": True,         # append the expected transfer date (pending rows only)
         "reject_word": "דחייה",
-        "joined_word": "הקופה נפתחה",
+        "joined_word": "",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",
@@ -481,6 +483,8 @@ def pilot_lock():
 
 
 DONE_TEXT = "ניוד בוצע לפי דוח יומי ממוכן"
+DEVIATION_TEXT = "בוצע ניוד אבל יש סטייה של יותר מ15%, יש לבדוק מדוע"
+DEVIATION_LIMIT = 0.15
 MIN_COMMON = 5  # a shared sequence of this many characters is enough to match accounts
 
 
@@ -513,12 +517,30 @@ def classify_report_row(r, cfg):
     amount = parse_amount(r.get("amount", ""))
     if amount > 0:
         return "done", DONE_TEXT, amount
-    transfer_status = (r.get("transfer_status") or "").strip()
-    if cfg.get("expected_status") and transfer_status == cfg["expected_status"]:
-        exp_date = (r.get("expected_date") or "").strip()
-        return "pending", cfg["expected_text"] + (" " + exp_date if exp_date else ""), 0
+    transfer_status = re.sub(r"\s+", " ", (r.get("transfer_status") or "")).strip()
+    note = (r.get("reject_desc") or "").strip()
     if transfer_status in cfg["pending_statuses"]:
-        return "pending", transfer_status, 0
+        text = transfer_status
+        if cfg.get("pending_with_note") and note:
+            text += " - " + note
+        return "pending", text, 0
+    if cfg.get("pending_any"):
+        parts = [transfer_status] if transfer_status else []
+        waiting = "ממתין להפקדה ראשונה"
+        # a remark such as "בקשת הניוד ממתינה להפקדה ראשונה" => write 'ממתין להפקדה ראשונה'
+        if re.search(r"ממתינ[הת]?\s+להפקדה\s+ראשונה", note) and waiting not in transfer_status:
+            parts.append(waiting)
+        exp = (r.get("expected_date") or "").strip() if cfg.get("with_expected_date") else ""
+        if exp:
+            parts.append("ניוד צפוי ב-" + exp)
+        if parts:
+            return "pending", ", ".join(parts), 0
+        return "none", "", 0
+    if transfer_status and transfer_status in cfg.get("reject_transfer_statuses", []):
+        return "reject", cfg["reject_word"] + (" " + note if note else ""), 0
+    if transfer_status and (transfer_status in cfg.get("closed_statuses", [])
+                            or any(transfer_status.startswith(p) for p in cfg.get("closed_prefixes", []))):
+        return "reject", transfer_status, 0
     if (r.get("join_status") or "").strip() == cfg["reject_word"]:
         desc = (r.get("reject_desc") or "").strip()
         detail = (r.get("reject_detail") or "").strip()
@@ -587,6 +609,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
     i_product, i_tcomp = idx(H_PRODUCT), idx(H_TRANSFER_COMPANY)
     i_fund, i_status = idx(H_TRANSFER_FUND_NUMBER), idx(H_STATUS)
     i_actual = idx(H_TRANSFER_ACTUAL)
+    i_expected = idx(H_TRANSFER_EXPECTED)
     for need, i in ((H_TRANSFER_ACTUAL, i_actual), (H_STATUS, i_status), (H_COMPANY, i_company)):
         if i == -1:
             raise RuntimeError(f"לא נמצאה עמודה בשם '{need}' בגיליון")
@@ -729,6 +752,13 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
         if done:
             kind, text = "done", DONE_TEXT
             amount = round(sum(f[3] for f in done), 2)
+            expected = parse_amount(cell(r, i_expected))
+            base["expected"] = fmt_amount(expected) if expected > 0 else ""
+            deviation = None
+            if expected > 0:
+                deviation = abs(amount - expected) / expected
+                if deviation > DEVIATION_LIMIT:
+                    text = DEVIATION_TEXT
             shared = [f for f in done if len(usage.get(f[0]["_n"], [])) > 1]
             if shared:
                 level, kind, text, amount = "review", "", "", 0
@@ -737,6 +767,11 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 level = "warn"
                 note = f"סכום של {len(done)} שורות בדוח עם אותו חשבון: " + " + ".join(
                     fmt_amount(f[3]) for f in done)
+            if kind == "done" and text == DEVIATION_TEXT:
+                level = "warn"
+                dnote = (f"סטייה של {deviation * 100:.0f}% – ניוד צפוי {fmt_amount(expected)}, "
+                         f"בדוח {fmt_amount(amount)}. השורה לא תיצבע בירוק")
+                note = (note + " · " if note else "") + dnote
         elif pending:
             texts = {f[2] for f in pending}
             if len(texts) > 1:
@@ -791,6 +826,8 @@ def should_paint_green(kind, text):
     """Green = 'reported/finished': a transfer with an actual amount, or a join
     where the account was opened AND the first deposit was made."""
     if kind == "done":
+        if text == DEVIATION_TEXT:
+            return False  # needs a look - keep it in the update list
         return True
     return kind == "join" and any(c["joined_deposit_text"] == text for c in DAILY_COMPANIES.values())
 
