@@ -594,6 +594,11 @@ def classify_join_row(r, cfg):
     return st
 
 
+def is_with_transfer(product):
+    """'הצטרפות לקרן השתלמות עם ניוד': the production is not finished until the transfer arrives."""
+    return bool(re.search(r"עם\s+ניוד", product or ""))
+
+
 def fund_key(fund):
     """'033-639-000445743-933-0' (a self-employed deposit track) -> '445743933' + '0': the
     account part, shared by all the tracks of one fund. Short numbers: digits only."""
@@ -749,7 +754,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
         }
         found = cands.get(rn, [])
         if not found and not base["has_fund"]:
-            dep = deposit_info(deposits, rid, base["product"])
+            dep = None if is_with_transfer(base["product"]) else deposit_info(deposits, rid, base["product"])
             if dep and dep["ok"]:
                 text = cfg["joined_deposit_text"]
                 lvl, nt, kd = "warn", (f"עצמאי – {dep['count']} הפקדות באותה קופה בגיליון מעקב הפקדות, בסך "
@@ -792,7 +797,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 if last_status_text(base["current_status"]) == text:
                     level, note, kind = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב", ""
             amount = 0
-            dep = deposit_info(deposits, rid, base["product"]) if kind == "join" else None
+            dep = deposit_info(deposits, rid, base["product"]) if (kind == "join" and not is_with_transfer(base["product"])) else None
             if dep and not text.startswith(cfg["reject_word"]):
                 if dep["ok"]:
                     text, amount = cfg["joined_deposit_text"], dep["amount"]
@@ -872,6 +877,11 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
 
     for x in items:
         x["green"] = bool(x.get("kind")) and should_paint_green(x["kind"], x.get("text", ""))
+        if x["green"] and x["kind"] == "join" and is_with_transfer(x.get("product", "")):
+            x["green"] = False  # "עם ניוד": the transfer has not arrived yet
+            x["note"] = ((x.get("note") or "") + " · " if x.get("note") else "") + "הצטרפות עם ניוד שעוד לא בוצע – לא תיצבע בירוק"
+            if x["level"] == "ok":
+                x["level"] = "warn"
     items.sort(key=lambda x: x["row_number"])
     stats["will_write"] = sum(1 for x in items if x["level"] in ("ok", "warn") and x["kind"])
     return {"items": items, "stats": stats}
@@ -927,6 +937,7 @@ def apply_daily_updates(items, today):
         return headers.index(name) if name in headers else -1
 
     i_status, i_actual, i_last = idx(H_STATUS), idx(H_TRANSFER_ACTUAL), idx(H_LAST_UPDATE)
+    i_product = idx(H_PRODUCT)
     if min(i_status, i_actual, i_last) == -1:
         raise RuntimeError("חסרה אחת העמודות: סטטוס הפקה / ניוד בפועל / תאריך עדכון אחרון")
 
@@ -956,16 +967,17 @@ def apply_daily_updates(items, today):
             continue
         new_status = (existing.rstrip() + "\n" if existing.strip() else "") + f"{today}-{text}"
         cells = [(i_status, new_status), (i_last, today)]
+        with_transfer = kind == "join" and 0 <= i_product < len(r["values"]) and is_with_transfer(r["values"][i_product])
         amount = parse_amount(str(it.get("amount", "")))
         if kind == "done" and amount <= 0:
             res["msg"] = "סכום לא תקין – לא נכתב"
             continue
-        if kind == "done" or (kind == "join" and amount > 0):
+        if kind == "done" or (kind == "join" and amount > 0 and not with_transfer):
             cells.append((i_actual, fmt_amount(amount)))
         for ci, val in cells:
             data.append({"range": f"'{title}'!{col_letter(ci + 1)}{rn}", "values": [[val]]})
         res["ok"], res["msg"] = True, "נכתב"
-        if should_paint_green(kind, text):
+        if should_paint_green(kind, text) and not with_transfer:
             green_rows.append(rn)
             res["msg"] = "נכתב וצבוע בירוק"
     if data:
