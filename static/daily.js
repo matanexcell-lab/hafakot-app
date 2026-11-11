@@ -29,6 +29,11 @@
       // ממשיכים, ורק ניודים לא יותאמו.
       required: ["id", "join_status"],
       headerKeys: ["id", "join_status"],
+      // גיליון "ריכוז דחיות": סיבת הדחייה כשבגיליון הראשי כתוב רק "דחייה"
+      rejections: {
+        sheetMatch: "ריכוז דחיות",
+        headers: { id: "ת.ז", fund: "מס' קופה", product: "סוג מוצר", date: "תאריך הדחייה", reason: "דחייה", detail: "פירוט הדחייה" },
+      },
       // גיליון הפקדות: לעצמאי עם הפקדות באותה קופה => הפקדה ראשונה + סכום ההפקדות
       deposits: {
         sheetMatch: "מעקב הפקדות",
@@ -45,6 +50,7 @@
         amount: "סכום להעברה",
         transfer_status: "סטטוס הליך ניוד",
         reject_desc: "הערות",
+        expected_date: "תאריך יעד לביצוע ההעברה",
       },
       required: ["id", "transfer_status"],
       headerKeys: ["id", "transfer_status"],
@@ -143,6 +149,7 @@
     try {
       const buf = await f.arrayBuffer();
       parsedRows = parseReport(buf, ADAPTERS[companySel.value]);
+      fillRejectReasons(buf, ADAPTERS[companySel.value], parsedRows);
       parsedDeposits = parseDeposits(buf, ADAPTERS[companySel.value]);
     } catch (e) {
       parsedRows = null;
@@ -150,6 +157,59 @@
     }
   });
   companySel.addEventListener("change", () => { fileInput.value = ""; parsedRows = null; fileInfo.textContent = ""; out.innerHTML = ""; });
+
+  // מילוי סיבת דחייה מגיליון "ריכוז דחיות" לשורות שכתוב בהן רק "דחייה"
+  function fillRejectReasons(buf, ad, rows) {
+    if (!ad.rejections) return 0;
+    const wb = XLSX.read(buf, { type: "array" });
+    const sn = wb.SheetNames.find((n) => norm(n).includes(norm(ad.rejections.sheetMatch)));
+    if (!sn) return 0;
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: false, defval: "" });
+    const H = ad.rejections.headers;
+    const need = [H.id, H.reason].map(norm);
+    let hr = -1;
+    for (let i = 0; i < Math.min(grid.length, 30); i++) {
+      const cells = grid[i].map(norm);
+      if (need.every((n) => cells.includes(n))) { hr = i; break; }
+    }
+    if (hr === -1) return 0;
+    const hc = grid[hr].map(norm);
+    const ix = {};
+    Object.keys(H).forEach((k) => { ix[k] = hc.indexOf(norm(H[k])); });
+    const val = (g, k) => (ix[k] < 0 ? "" : String(g[ix[k]] == null ? "" : g[ix[k]]).trim());
+    const idn = (x) => String(x).replace(/\D/g, "").replace(/^0+/, "");
+    const prodKind = (s) => { const n = norm(s); return n.includes("השתלמות") ? "h" : n.includes("פנסיה") ? "p" : n.includes("גמל") ? "g" : ""; };
+    const dnum = (s) => { const m = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s); return m ? +m[3] * 10000 + +m[2] * 100 + +m[1] : 0; };
+    const rej = [];
+    for (let i = hr + 1; i < grid.length; i++) {
+      const g = grid[i];
+      if (!val(g, "id") || !val(g, "reason")) continue;
+      rej.push({ id: idn(val(g, "id")), fund: val(g, "fund"), product: val(g, "product"), date: val(g, "date"), reason: val(g, "reason"), detail: val(g, "detail") });
+    }
+    const hasSeq = (a, b) => {  // רצף משותף של 5 ספרות
+      const x = String(a).replace(/\D/g, ""), y = String(b).replace(/\D/g, "");
+      if (x.length < 5 || y.length < 5) return false;
+      for (let k = 0; k + 5 <= x.length; k++) if (y.includes(x.substr(k, 5))) return true;
+      return false;
+    };
+    let filled = 0;
+    rows.forEach((r) => {
+      const isRej = [r.join_status, r.transfer_status].some((s) => norm(s) === norm("דחייה"));
+      if (!isRej || r.reject_desc) return;
+      const cands = rej.filter((x) => x.id === idn(r.id));
+      if (!cands.length) return;
+      const scored = cands.map((x) => ({
+        x,
+        score: (prodKind(x.product) && prodKind(x.product) === prodKind(r.product) ? 2 : 0) + (r.acc && x.fund && hasSeq(r.acc, x.fund) ? 3 : 0),
+      }));
+      scored.sort((a, b) => b.score - a.score || dnum(b.x.date) - dnum(a.x.date));
+      const best = scored[0].x;
+      r.reject_desc = best.reason;
+      r.reject_detail = r.reject_detail || best.detail;
+      filled++;
+    });
+    return filled;
+  }
 
   // גיליון "מעקב הפקדות" (אופציונלי) – מחזיר רק שורות עם ערך בסכום ההפקדה
   function parseDeposits(buf, ad) {
