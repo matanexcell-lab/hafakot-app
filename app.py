@@ -444,6 +444,7 @@ DAILY_COMPANIES = {
         "pending_statuses": ["ממתין להפקדה ראשונה", "ניוד בתהליך", "נשלח חוסר לבקשת הניוד",
                              "ממתין להשלמת חוסרי הצטרפות"],
         "pending_with_note": True,          # append the report's remark (הערות) to a pending status
+        "with_expected_date": True,         # append the target transfer date (pending rows only)
         "reject_word": "דחייה",
         "reject_transfer_statuses": ["התקבלה דחיה מקופה מעבירה"],  # -> "דחייה <הערות>"
         "closed_statuses": ["העברה בוטלה ע\"י העמית"],              # written as-is
@@ -523,6 +524,9 @@ def classify_report_row(r, cfg):
         text = transfer_status
         if cfg.get("pending_with_note") and note:
             text += " - " + note
+        exp = (r.get("expected_date") or "").strip() if cfg.get("with_expected_date") else ""
+        if exp and re.search(r"\d", exp):
+            text += ", ניוד צפוי ב-" + exp
         return "pending", text, 0
     if cfg.get("pending_any"):
         parts = [transfer_status] if transfer_status else []
