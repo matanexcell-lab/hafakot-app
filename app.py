@@ -736,11 +736,19 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             fund = ""  # e.g. "אין ניוד" = no transfer account => join-only
         found = []
         site_prod = norm_product(cell(r, i_product))
+        # an exact account number beats a "similar" one (e.g. ...3959 vs ...3962 share a long prefix)
+        def _digits(x):
+            return re.sub(r"\D", "", x or "").lstrip("0")
+        exact_reps = [rep for rep in by_id.get(rid, []) if fund and _digits(fund) and _digits(fund) == _digits(rep.get("acc", ""))]
         for rep in by_id.get(rid, []):
             if fund:
-                if accounts_match(fund, rep.get("acc", "")):
-                    kind, text, amount = classify_report_row(rep, cfg)
-                    found.append((rep, kind, text, amount))
+                if exact_reps:
+                    if rep not in exact_reps:
+                        continue
+                elif not accounts_match(fund, rep.get("acc", "")):
+                    continue
+                kind, text, amount = classify_report_row(rep, cfg)
+                found.append((rep, kind, text, amount))
             else:
                 # no transfer fund number on the site => a join-only production
                 req = norm_acc(rep.get("request_type", ""))
