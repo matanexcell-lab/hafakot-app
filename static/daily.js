@@ -71,6 +71,7 @@
       doneByDeposit: true,   // הניוד בוצע רק כשיש ערך בעמודת "סכום הפקדה"
       required: ["id", "transfer_status"],
       headerKeys: ["id", "transfer_status"],
+      altParser: "mor2",   // דוח 21.01B – ראה parseMor2
     },
   };
 
@@ -88,6 +89,7 @@
 
   let parsedRows = null;
   let parsedDeposits = [];
+  let altDeposits = null;
   let lastItems = [];
   let lastToday = "";
   let applied = false;
@@ -213,6 +215,7 @@
 
   // גיליון "מעקב הפקדות" (אופציונלי) – מחזיר רק שורות עם ערך בסכום ההפקדה
   function parseDeposits(buf, ad) {
+    if (altDeposits) return altDeposits;
     if (!ad.deposits) return [];
     const wb = XLSX.read(buf, { type: "array" });
     const dsn = wb.SheetNames.find((n) => norm(n).includes(norm(ad.deposits.sheetMatch)));
@@ -239,10 +242,125 @@
     return out;
   }
 
+  // ---------- מור – דוח 21.01B (גיליונות: סטטוס ניודים נכנסים / הפקדה ראשונה / קופות שנפתחו / ריג'קטים) ----------
+  function parseMor2(buf) {
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const p2 = (n) => String(n).padStart(2, "0");
+    const txt = (x) => {
+      if (x instanceof Date) {
+        const d = new Date(x.getTime() + 12 * 3600 * 1000);   // לעגל ליום הקרוב (שעות/אזורי זמן)
+        return `${p2(d.getUTCDate())}/${p2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+      }
+      return String(x == null ? "" : x).replace(/\s+/g, " ").trim();
+    };
+    const mapProduct = (s) => {
+      const n = norm(s);
+      if (n.includes("השתלמות")) return "קרן השתלמות";
+      if (n.includes("להשקעה")) return "קופת גמל להשקעה";
+      if (n.includes("פנסיה")) return "קרן פנסיה";
+      if (n.includes("גמל") || n.includes("תגמולים")) return "קופת גמל";
+      return txt(s);
+    };
+    const sheet = (key) => {
+      const sn = wb.SheetNames.find((n) => norm(n).includes(norm(key)));
+      return sn ? XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: "" }) : null;
+    };
+    // מחזיר [{header->value}] לפי שורת הכותרות שמכילה את כל needed
+    const table = (grid, needed) => {
+      if (!grid) return [];
+      const nn = needed.map(norm);
+      let hr = -1;
+      for (let i = 0; i < Math.min(grid.length, 30); i++) {
+        const c = grid[i].map(norm);
+        if (nn.every((n) => c.includes(n))) { hr = i; break; }
+      }
+      if (hr === -1) return [];
+      const hc = grid[hr].map(norm);
+      const out = [];
+      for (let i = hr + 1; i < grid.length; i++) {
+        const g = grid[i];
+        out.push((h) => { const k = hc.indexOf(norm(h)); return k < 0 ? "" : g[k]; });
+      }
+      return out;
+    };
+    const validId = (x) => /^\d{5,}$/.test(String(x).trim());
+    const rows = [], deposits = [];
+    const mk = (o) => Object.assign({ id: "", name: "", acc: "", amount: "", transfer_status: "", join_status: "",
+      reject_desc: "", reject_detail: "", request_type: "", product: "", deposit_date: "", expected_date: "" }, o);
+
+    // 1. ניודים נכנסים
+    table(sheet("סטטוס ניודים נכנסים"), ["ת. ז עמית", "מצב העברה"]).forEach((g) => {
+      const id = txt(g("ת. ז עמית"));
+      if (!validId(id)) return;
+      let status = txt(g("מצב העברה"));
+      const why = txt(g("סיבת דחיית הבקשה"));
+      if (why) status += " - " + why;
+      const done = status.startsWith("ניוד הושלם") || status.startsWith("ניוד מבוטל");
+      rows.push(mk({ id, name: txt(g("שם עמית")), acc: txt(g("מספר חשבון במעבירה")),
+        amount: txt(g("סכום העברה בפועל")), transfer_status: status,
+        expected_date: done ? "" : txt(g("תאריך העברה צפוי")), product: mapProduct(g("שם קופה מקבלת")) }));
+    });
+
+    // 2. הפקדה ראשונה
+    const firstDep = new Set();
+    const seenDep = new Set();
+    table(sheet("הפקדה ראשונה"), ["ת. זהות", "סכום הפקדה ראשונה"]).forEach((g) => {
+      const id = txt(g("ת. זהות"));
+      if (!validId(id)) return;
+      const acc = txt(g("מספר חשבון מעבירה בהצטרפות"));
+      const product = mapProduct(g("שם קופה"));
+      const dd = txt(g("תאריך הפקדה ראשונה"));
+      const dkey = [id, product, acc, dd].join("|");
+      if (!seenDep.has(dkey)) {
+        seenDep.add(dkey);
+        rows.push(mk({ id, name: txt(g("שם עמית")), acc, product, join_status: "הקופה נפתחה",
+          request_type: acc ? "הצטרפות+ניוד" : "הצטרפות", deposit_date: dd }));
+      }
+      firstDep.add(id + "|" + product);
+      if (!acc) deposits.push({ id, product, fund: txt(g("מספר חשבון")), status: txt(g("מעמד עמית")), amount: txt(g("סכום הפקדה ראשונה")) });
+    });
+
+    // 3. קופות שנפתחו (בלי כפילויות, ובלי מי שכבר קיבל הפקדה ראשונה)
+    const seen = new Set();
+    table(sheet("קופות שנפתחו"), ["ת.ז עמית", "סוג הצטרפות"]).forEach((g) => {
+      const id = txt(g("ת.ז עמית"));
+      if (!validId(id)) return;
+      const product = mapProduct(g("מוצר ראשי"));
+      const type = txt(g("סוג הצטרפות")).replace(/\s+/g, "");
+      const acc = txt(g("מספר חשבון מעביר"));
+      const key = [id, product, type, acc].join("|");
+      if (seen.has(key) || firstDep.has(id + "|" + product)) return;
+      seen.add(key);
+      rows.push(mk({ id, name: txt(g("שם העמית")), acc, product, join_status: "הקופה נפתחה", request_type: type }));
+    });
+
+    // 4. ריג'קטים
+    const seenRej = new Set();
+    table(sheet("ריג'קטים"), ["ת. זהות עמית", "סיבת ריג'קט"]).forEach((g) => {
+      const id = txt(g("ת. זהות עמית"));
+      if (!validId(id)) return;
+      const text = [txt(g("סטטוס")), txt(g("סיבת ריג'קט"))].filter(Boolean).join(" - ");
+      const prod = mapProduct(g("שם קופה מקבלת"));
+      const rtype = txt(g("סוג הטופס")).replace(/\s+/g, "");
+      const rkey = [id, prod, rtype, text].join("|");
+      if (seenRej.has(rkey)) return;
+      seenRej.add(rkey);
+      rows.push(mk({ id, name: txt(g("שם העמית")), acc: txt(g("מספר חשבון במעבירה")),
+        product: prod, join_status: text, transfer_status: text, request_type: rtype }));
+    });
+    return { rows, deposits };
+  }
+
   function parseReport(buf, ad) {
     const wb = XLSX.read(buf, { type: "array" });
     const want = norm(ad.sheetMatch);
     const sheetName = wb.SheetNames.find((n) => norm(n).includes(want));
+    altDeposits = null;
+    if (!sheetName && ad.altParser === "mor2" && wb.SheetNames.some((n) => norm(n).includes(norm("סטטוס ניודים נכנסים")))) {
+      const res = parseMor2(buf);
+      altDeposits = res.deposits;
+      return res.rows;
+    }
     if (!sheetName) {
       throw new Error(`בקובץ אין גיליון בשם "${ad.sheetMatch}". הגיליונות שנמצאו: ${wb.SheetNames.join(", ")}`);
     }
@@ -390,6 +508,15 @@
     h += group("לבדיקה ידנית – לא ייכתב", review, true);
     h += group("ת.ז נמצאה בדוח אבל אין התאמת חשבון", nomatch, false);
     h += group("דולגו", skip, false);
+    const un = data.unhandled || [];
+    if (un.length) {
+      h += `<details class="dl-group"><summary>ת.ז בדוח שלא קיבלו כרטיס (${un.length})</summary>` +
+        un.map((u) => `<div class="dl-card">
+          <div><b>${esc(u.name || "")}</b> · ת.ז ${esc(u.id)}</div>
+          <div class="dl-note">${esc(u.reason)}</div>
+          ${(u.report || []).map((r) => `<div class="dl-rep">בדוח: ${esc(typeof r === "string" ? r : [r.name, r.acc ? "חשבון " + r.acc : "", r.amount ? "סכום " + r.amount : "", r.transfer_status || r.join_status].filter(Boolean).join(" · "))}</div>`).join("")}
+        </div>`).join("") + "</details>";
+    }
 
     out.innerHTML = h;
     wirePreview();
