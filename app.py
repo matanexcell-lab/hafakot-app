@@ -603,6 +603,12 @@ def is_with_transfer(product):
     return bool(re.search(r"עם\s+ניוד", product or ""))
 
 
+def _dmy(text):
+    """'05/10/2026' -> 20261005 (0 when missing)"""
+    m = re.match(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})", text or "")
+    return int(m.group(3)) * 10000 + int(m.group(2)) * 100 + int(m.group(1)) if m else 0
+
+
 def fund_key(fund):
     """'033-639-000445743-933-0' (a self-employed deposit track) -> '445743933' + '0': the
     account part, shared by all the tracks of one fund. Short numbers: digits only."""
@@ -815,6 +821,16 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             continue
 
         if not base["has_fund"]:
+            pick_note = ""
+            if len({f[2] for f in found}) > 1 and all(_dmy(f[0].get("event_date")) for f in found):
+                # conflicting statuses: the LATEST one in the report wins
+                latest = max(_dmy(f[0]["event_date"]) for f in found)
+                winners = [f for f in found if _dmy(f[0]["event_date"]) == latest]
+                if len({f[2] for f in winners}) == 1:
+                    others = sorted({f[2] for f in found if f not in winners and f[2]})
+                    pick_note = (f"בדוח כמה סטטוסים לאותה הצטרפות – נבחר המאוחר ביותר ({winners[0][0]['event_date']})"
+                                 + (": בדוח גם " + " / ".join(others) if others else ""))
+                    found = winners
             texts = {f[2] for f in found}
             report_view = [_rep_view(f[0]) for f in found]
             if texts == {""}:
@@ -825,7 +841,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 kind, text = "", ""
             else:
                 kind, text = "join", texts.pop()
-                level, note = "ok", ""
+                level, note = ("warn", pick_note) if pick_note else ("ok", "")
                 if not product_is_known(norm_product(base["product"])):
                     level, note = "warn", "סוג המוצר באתר (" + base["product"] + ") לא מזוהה כגמל/השתלמות/פנסיה – ההתאמה לפי ת.ז בלבד. בדוק לפני סימון"
                 if len(found) > 1:
