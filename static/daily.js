@@ -286,7 +286,7 @@
     const validId = (x) => /^\d{5,}$/.test(String(x).trim());
     const rows = [], deposits = [];
     const mk = (o) => Object.assign({ id: "", name: "", acc: "", amount: "", transfer_status: "", join_status: "",
-      reject_desc: "", reject_detail: "", request_type: "", product: "", deposit_date: "", expected_date: "" }, o);
+      reject_desc: "", reject_detail: "", request_type: "", product: "", deposit_date: "", expected_date: "", event_date: "" }, o);
 
     // 1. ניודים נכנסים
     table(sheet("סטטוס ניודים נכנסים"), ["ת. ז עמית", "מצב העברה"]).forEach((g) => {
@@ -314,7 +314,7 @@
       if (!seenDep.has(dkey)) {
         seenDep.add(dkey);
         rows.push(mk({ id, name: txt(g("שם עמית")), acc, product, join_status: "הקופה נפתחה",
-          request_type: acc ? "הצטרפות+ניוד" : "הצטרפות", deposit_date: dd }));
+          request_type: acc ? "הצטרפות+ניוד" : "הצטרפות", deposit_date: dd, event_date: dd }));
       }
       firstDep.add(id + "|" + product);
       if (!acc) deposits.push({ id, product, fund: txt(g("מספר חשבון")), status: txt(g("מעמד עמית")), amount: txt(g("סכום הפקדה ראשונה")) });
@@ -331,7 +331,7 @@
       const key = [id, product, type, acc].join("|");
       if (seen.has(key) || firstDep.has(id + "|" + product)) return;
       seen.add(key);
-      rows.push(mk({ id, name: txt(g("שם העמית")), acc, product, join_status: "הקופה נפתחה", request_type: type }));
+      rows.push(mk({ id, name: txt(g("שם העמית")), acc, product, join_status: "הקופה נפתחה", request_type: type, event_date: txt(g("תאריך פתיחת חשבון")) }));
     });
 
     // 4. ריג'קטים
@@ -346,7 +346,8 @@
       if (seenRej.has(rkey)) return;
       seenRej.add(rkey);
       rows.push(mk({ id, name: txt(g("שם העמית")), acc: txt(g("מספר חשבון במעבירה")),
-        product: prod, join_status: text, transfer_status: text, request_type: rtype }));
+        product: prod, join_status: text, transfer_status: text, request_type: rtype,
+        event_date: txt(g("תאריך עדכון ריג'קט")) }));
     });
     return { rows, deposits };
   }
