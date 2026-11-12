@@ -449,7 +449,7 @@ DAILY_COMPANIES = {
         "reject_transfer_statuses": ["התקבלה דחיה מקופה מעבירה"],  # -> "דחייה <הערות>"
         "closed_statuses": ["העברה בוטלה ע\"י העמית"],              # written as-is
         "closed_prefixes": ["בקשה נסגרה"],                          # written as-is (startswith)
-        "joined_word": "",
+        "joined_word": "הקופה נפתחה",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",
@@ -462,7 +462,7 @@ DAILY_COMPANIES = {
         "pending_any": True,                # any non-empty status text is written as-is (pending)
         "with_expected_date": True,         # append the expected transfer date (pending rows only)
         "reject_word": "דחייה",
-        "joined_word": "",
+        "joined_word": "הקופה נפתחה",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",
@@ -682,20 +682,30 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
     stats = {"site_rows_total": len(sheet_rows), "skipped_has_actual": 0, "skipped_color": 0,
              "skipped_other_company": 0, "eligible": 0, "id_not_in_report": 0}
     eligible = []
+    site_ids = set()
+    skip_why = {}  # rid -> why its site rows were not examined
+
+    def why(rid, text):
+        skip_why.setdefault(rid, []).append(text)
+
     for r in sheet_rows:
         rid = norm_id(r["values"][ID_COLUMN_INDEX] if len(r["values"]) > ID_COLUMN_INDEX else "")
         if not rid:
             continue
+        site_ids.add(rid)
         if pilot and rid not in pilot:
             continue
         if cfg["site_company"] not in cell(r, i_company):
             stats["skipped_other_company"] += 1
+            why(rid, f"שורה {r['row_number']} באתר: החברה היא '{cell(r, i_company)}' ולא '{cfg['site_company']}'")
             continue
         if re.search(r"\d", cell(r, i_actual)):  # text like 'אין ניוד' is not an actual transfer
             stats["skipped_has_actual"] += 1
+            why(rid, f"שורה {r['row_number']} באתר: כבר יש ניוד בפועל ({cell(r, i_actual)})")
             continue
         if r["is_green"] or r["is_red"]:
             stats["skipped_color"] += 1
+            why(rid, f"שורה {r['row_number']} באתר: צבועה {'בירוק' if r['is_green'] else 'באדום'}")
             continue
         eligible.append((r, rid))
     stats["eligible"] = len(eligible)
@@ -887,8 +897,30 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             if x["level"] == "ok":
                 x["level"] = "warn"
     items.sort(key=lambda x: x["row_number"])
+    # report ids that got no card at all, with the reason
+    handled = {norm_id(x["id"]) for x in items}
+    unhandled, seen = [], set()
+    for rep in report_rows:
+        rid = norm_id(rep.get("id", ""))
+        if not rid or rid in handled or rid in seen:
+            continue
+        seen.add(rid)
+        if pilot and rid not in pilot:
+            reason = "מחוץ לרשימת הפיילוט"
+        elif rid in skip_why:
+            reason = " · ".join(skip_why[rid])
+        elif rid not in site_ids:
+            reason = "ת.ז לא קיימת בגיליון באתר"
+        else:
+            reason = "אין בגיליון באתר שורה שנבדקה"
+        mine = [x for x in report_rows if norm_id(x.get("id", "")) == rid]
+        unhandled.append({
+            "id": rep.get("id", ""), "name": rep.get("name", ""), "reason": reason,
+            "report": [_rep_view(x) for x in mine][:4],
+        })
+    stats["unhandled"] = len(unhandled)
     stats["will_write"] = sum(1 for x in items if x["level"] in ("ok", "warn") and x["kind"])
-    return {"items": items, "stats": stats}
+    return {"items": items, "stats": stats, "unhandled": unhandled}
 
 
 def _rep_view(rep):
