@@ -740,12 +740,28 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
         def _digits(x):
             return re.sub(r"\D", "", x or "").lstrip("0")
         exact_reps = [rep for rep in by_id.get(rid, []) if fund and _digits(fund) and _digits(fund) == _digits(rep.get("acc", ""))]
+        def _common(a, b):  # longest shared run of digits
+            a, b, best = _digits(a), _digits(b), 0
+            for i in range(len(a)):
+                for j in range(len(b)):
+                    k = 0
+                    while i + k < len(a) and j + k < len(b) and a[i + k] == b[j + k]:
+                        k += 1
+                    best = max(best, k)
+            return best
+
+        loose_reps = []
+        if fund and not exact_reps:
+            loose_reps = [rep for rep in by_id.get(rid, []) if accounts_match(fund, rep.get("acc", ""))]
+            if len(loose_reps) > 1:  # several similar accounts: keep the closest one(s)
+                top = max(_common(fund, rep.get("acc", "")) for rep in loose_reps)
+                loose_reps = [rep for rep in loose_reps if _common(fund, rep.get("acc", "")) == top]
         for rep in by_id.get(rid, []):
             if fund:
                 if exact_reps:
                     if rep not in exact_reps:
                         continue
-                elif not accounts_match(fund, rep.get("acc", "")):
+                elif rep not in loose_reps:
                     continue
                 kind, text, amount = classify_report_row(rep, cfg)
                 found.append((rep, kind, text, amount))
