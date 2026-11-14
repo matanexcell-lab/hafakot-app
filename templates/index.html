@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <style>
   #daily-panel textarea.tz-input{resize:vertical;font-family:inherit}
+  .ids-line{display:flex;gap:8px;align-items:center}.ids-line .tz-input{flex:1}.ids-copy{flex:none;width:auto;padding:8px 14px}
   .dl-note{font-size:13px;color:var(--ink-soft,#666);margin:8px 0}
   .dl-bad{color:#b3261e;font-weight:600;margin:8px 0}
   .dl-sum{background:var(--paper,#f6f3ee);border:1.5px solid var(--line,#ddd);border-radius:10px;padding:12px;margin:8px 0;font-size:14px;line-height:1.7}
@@ -84,6 +85,20 @@
         <span class="action-title">העלאת דוח יומי</span>
         <span class="action-sub">עדכון ניודים מקובץ אקסל של חברה (פיילוט – מיטב)</span>
       </button>
+      <button type="button" class="action-btn" id="btn-idscan" style="margin-top: 10px; width: 100%;">
+        <span class="action-title">סריקת ת.ז</span>
+        <span class="action-sub">העלאת צילום תעודת זהות – קריאת מספר ת.ז, תאריך לידה ותאריך הנפקה</span>
+      </button>
+    </section>
+
+    <section class="panel" id="idscan-panel" hidden>
+      <label class="field-label" for="idscan-file">צילום או תמונה של תעודת הזהות</label>
+      <input id="idscan-file" class="tz-input" type="file" accept="image/*">
+      <div class="dl-note">הסריקה מתבצעת בדפדפן שלך בלבד – התמונה לא נשלחת לשרת ולא נשמרת. צלם ישר, באור טוב ובלי סנוור.</div>
+      <img id="idscan-preview" alt="תצוגה מקדימה" hidden style="max-width:100%;border-radius:10px;margin:8px 0">
+      <div id="idscan-status" class="dl-note"></div>
+      <div id="idscan-result"></div>
+      <details class="ids-raw"><summary class="dl-note">הטקסט שנקרא מהתמונה</summary><pre id="idscan-raw" dir="auto" style="white-space:pre-wrap;font-size:12px"></pre></details>
     </section>
 
     <section class="panel" id="daily-panel" hidden>
@@ -164,5 +179,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="{{ url_for('static', filename='script.js') }}"></script>
   <script src="{{ url_for('static', filename='daily.js') }}"></script>
+  <script src="{{ url_for('static', filename='idscan.js') }}"></script>
 </body>
 </html>
