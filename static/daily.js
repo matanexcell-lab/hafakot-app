@@ -119,7 +119,7 @@
     toast._t = setTimeout(() => { t.hidden = true; }, 4200);
   }
   function hideOthers() {
-    ["results-panel", "reports-panel", "empty-state"].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+    ["results-panel", "reports-panel", "empty-state", "idscan-panel"].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
   }
 
   // ---------- פתיחה/סגירה ----------
