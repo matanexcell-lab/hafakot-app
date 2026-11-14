@@ -100,6 +100,7 @@
   const $ = (id) => document.getElementById(id);
   const btnOpen = $("btn-idscan"), panel = $("idscan-panel");
   if (!btnOpen || !panel) return;
+  window.__idscanReady = true;
   const fileInput = $("idscan-file"), preview = $("idscan-preview"), status = $("idscan-status");
   const result = $("idscan-result"), rawBox = $("idscan-raw");
   let objUrl = null, busy = false;
