@@ -206,8 +206,35 @@
   const fmt = (d) => `${pad2(d.d)}/${pad2(d.m)}/${d.y}`;
   const key = (d) => d.y * 10000 + d.m * 100 + d.d;
 
+  // שמות: מחפש את תוויות "שם משפחה" / "שם פרטי" ולוקח את המילה העברית שלידן (אותה שורה או הבאה)
+  const NAME_STOP = new Set(["שם","המשפחה","משפחה","הפרטי","פרטי","השם","העאילה","תעודת","זהות","מדינת","ישראל","משרד","הפנים","תאריך","הלידה","לידה","הנפקה","הוצאה","תוקף","בתוקף","עד","מספר","הזהות","הזהות","בטאקה","הולדה","הכי","של"]);
+  function nameFromLines(lines, labelRe) {
+    const tok = /^[א-ת]{2,}(?:['"״׳][א-ת])?$/;
+    const stopLine = /תאריך|הלידה|הנפקה|תוקף|מספר|הזהות/;
+    const pick = (line) => String(line || "").split(/[\s,.:;|()\-_=<>!?\[\]{}"'״׳«»]+/)
+      .filter((w) => tok.test(w) && !NAME_STOP.has(w) && !/^ה?(משפחה|פרטי)$/.test(w));
+    for (let i = 0; i < lines.length; i++) {
+      if (!labelRe.test(lines[i])) continue;
+      let w = pick(lines[i].replace(labelRe, " "));
+      if (w.length) return w.slice(0, 2).join(" ");
+      for (let k = 1; k <= 2 && i + k < lines.length; k++) {
+        if (stopLine.test(lines[i + k]) || /משפחה|פרטי/.test(lines[i + k])) break;
+        w = pick(lines[i + k]);
+        if (w.length) return w.slice(0, 2).join(" ");
+      }
+    }
+    return "";
+  }
+  function parseNames(text) {
+    const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    return {
+      lastName: nameFromLines(lines, /שם\s*המשפחה|שם\s*משפחה|המשפחה|משפחה/),
+      firstName: nameFromLines(lines, /השם\s*הפרטי|שם\s*פרטי|הפרטי|פרטי|(?:^|\s)השם(?=\s|$)/),
+    };
+  }
+
   // מקבל את הטקסט שה-OCR קרא ומחזיר {id, idOk, birth, issue, expiry, notes[]}
-  function parseIdText(text, today, digitText) {
+  function parseIdText(text, today, digitText, nameText) {
     today = today || new Date();
     const todayKey = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
     const notes = [];
@@ -295,14 +322,16 @@
     if (!issue) notes.push("לא נמצא תאריך הנפקה");
     if (birth && issue && key(issue) <= key(birth)) notes.push("תאריך ההנפקה לפני תאריך הלידה – בדוק");
     if (birth && key(birth) > todayKey) notes.push("תאריך הלידה בעתיד – בדוק");
+    const n1 = parseNames(nameText), n2 = parseNames(text);
     return {
       id, idOk,
+      lastName: n1.lastName || n2.lastName, firstName: n1.firstName || n2.firstName,
       birth: birth ? fmt(birth) : "", issue: issue ? fmt(issue) : "", expiry: expiry ? fmt(expiry) : "",
       notes,
     };
   }
 
-  if (typeof window === "undefined") { module.exports = { parseIdText, idChecksumOk }; return; }
+  if (typeof window === "undefined") { module.exports = { parseIdText, idChecksumOk, parseNames }; return; }
 
   // ---------- ממשק ----------
   const $ = (id) => document.getElementById(id);
@@ -363,6 +392,29 @@
     return c;
   }
 
+  // שחור-לבן מקומי (סף אדפטיבי) – מנקה רקע הולוגרפי של הכרטיס כדי לקרוא טוב יותר את השמות
+  function binarize(c) {
+    const w = c.width, h = c.height, ctx = c.getContext("2d");
+    const im = ctx.getImageData(0, 0, w, h), d = im.data;
+    const I = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += d[(y * w + x) * 4]; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row; } }
+    const r = Math.max(12, Math.round(Math.min(w, h) / 40));
+    const out = document.createElement("canvas"); out.width = w; out.height = h;
+    const octx = out.getContext("2d"), o = octx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+      for (let x = 0; x < w; x++) {
+        const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+        const sum = I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0];
+        const mean = sum / ((x1 - x0) * (y1 - y0));
+        const v = d[(y * w + x) * 4] < mean - 12 ? 0 : 255, k = (y * w + x) * 4;
+        o.data[k] = o.data[k + 1] = o.data[k + 2] = v; o.data[k + 3] = 255;
+      }
+    }
+    octx.putImageData(o, 0, 0);
+    return out;
+  }
+
   function field(label, id, val, hint) {
     return `<div class="ids-row"><label class="field-label" for="${id}">${label}</label>
       <div class="ids-line"><input id="${id}" class="tz-input" inputmode="numeric" dir="ltr" value="${esc(val)}">
@@ -378,6 +430,8 @@
       return `גיל: ${a}`;
     })();
     result.innerHTML =
+      field("שם משפחה", "ids-last", r.lastName, r.lastName ? "" : "לא זוהה – אפשר להקליד ידנית").replace('inputmode="numeric" dir="ltr"', 'dir="rtl"') +
+      field("שם פרטי", "ids-first", r.firstName, r.firstName ? "" : "לא זוהה – אפשר להקליד ידנית").replace('inputmode="numeric" dir="ltr"', 'dir="rtl"') +
       field("מספר ת.ז", "ids-id", r.id, r.id ? (r.idOk ? "✔ ספרת הביקורת תקינה" : "⚠ ספרת הביקורת לא תקינה – בדוק מול התמונה") : "") +
       field("תאריך לידה (dd/mm/yyyy)", "ids-birth", r.birth, ageTxt) +
       field("תאריך הנפקה (dd/mm/yyyy)", "ids-issue", r.issue, "") +
@@ -390,7 +444,7 @@
     result.querySelectorAll(".ids-copy").forEach((b) => b.addEventListener("click", () => copy($(b.dataset.for).value)));
     $("ids-copyall").addEventListener("click", () => {
       const g = (i) => ($(i) ? $(i).value : "");
-      copy(`ת.ז: ${g("ids-id")}\nתאריך לידה: ${g("ids-birth")}\nתאריך הנפקה: ${g("ids-issue")}`);
+      copy(`שם משפחה: ${g("ids-last")}\nשם פרטי: ${g("ids-first")}\nת.ז: ${g("ids-id")}\nתאריך לידה: ${g("ids-birth")}\nתאריך הנפקה: ${g("ids-issue")}`);
     });
     $("ids-clear").addEventListener("click", clearAll);
   }
@@ -456,7 +510,7 @@
       for (const f of files) canvases.push(...(await toCanvases(f, (t) => { status.textContent = t; })));
       status.textContent = "טוען רכיב סריקה (בפעם הראשונה לוקח כמה שניות)…";
       if (!window.Tesseract) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js");
-      let all = "", digits = "";
+      let all = "", digits = "", nameTxt = "";
       for (let i = 0; i < canvases.length; i++) {
         const tag = canvases.length > 1 ? ` (${i + 1}/${canvases.length})` : "";
         status.textContent = "קורא את הקובץ…" + tag;
@@ -464,6 +518,15 @@
           logger: (m) => { if (m.status === "recognizing text") status.textContent = `קורא את הקובץ… ${Math.round(m.progress * 100)}%${tag}`; },
         });
         all += data.text + "\n";
+        // אם השמות לא זוהו – מעבר נוסף על תמונה מנוקה (שחור-לבן אדפטיבי)
+        const pn = parseNames(data.text);
+        if (!pn.lastName || !pn.firstName) {
+          try {
+            status.textContent = "מנסה לקרוא שמות…" + tag;
+            const r3 = await window.Tesseract.recognize(binarize(canvases[i]), "heb");
+            nameTxt += r3.data.text + "\n";
+          } catch (e3) { /* ממשיכים */ }
+        }
         // מעבר שני: ספרות בלבד (אנגלית) – שומר על סדר הספרות הנכון במספר הזהות ובתאריכים
         try {
           status.textContent = "בודק מספרים…" + tag;
@@ -474,9 +537,9 @@
           await w.terminate();
         } catch (e2) { /* המעבר המשלים נכשל – ממשיכים עם הטקסט הרגיל */ }
       }
-      const parsed = parseIdText(all, undefined, digits);
+      const parsed = parseIdText(all, undefined, digits, nameTxt);
       status.textContent = "הסריקה הסתיימה – בדוק את הערכים ותקן במידת הצורך";
-      render(parsed, all + (digits ? "\n--- ספרות ---\n" + digits : ""));
+      render(parsed, all + (nameTxt ? "\n--- שמות ---\n" + nameTxt : "") + (digits ? "\n--- ספרות ---\n" + digits : ""));
     } catch (e) {
       status.textContent = "";
       rawBox.textContent = "(הסריקה נכשלה)";
