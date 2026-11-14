@@ -92,8 +92,8 @@
     </section>
 
     <section class="panel" id="idscan-panel" hidden>
-      <label class="field-label" for="idscan-file">צילום או תמונה של תעודת הזהות</label>
-      <input id="idscan-file" class="tz-input" type="file" accept="image/*">
+      <label class="field-label" for="idscan-file">תמונה או קובץ PDF של תעודת הזהות (אפשר לבחור כמה קבצים, למשל צד קדמי ואחורי)</label>
+      <input id="idscan-file" class="tz-input" type="file" accept="image/*,application/pdf,.pdf" multiple>
       <div class="dl-note">הסריקה מתבצעת בדפדפן שלך בלבד – התמונה לא נשלחת לשרת ולא נשמרת. צלם ישר, באור טוב ובלי סנוור.</div>
       <img id="idscan-preview" alt="תצוגה מקדימה" hidden style="max-width:100%;border-radius:10px;margin:8px 0">
       <div id="idscan-status" class="dl-note"></div>
@@ -207,23 +207,29 @@
   const key = (d) => d.y * 10000 + d.m * 100 + d.d;
 
   // מקבל את הטקסט שה-OCR קרא ומחזיר {id, idOk, birth, issue, expiry, notes[]}
-  function parseIdText(text, today) {
+  function parseIdText(text, today, digitText) {
     today = today || new Date();
     const todayKey = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
     const notes = [];
     const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
     // --- מספר זהות ---
-    const cands = [];
-    const idRe = /(?<!\d)(\d[\d ]{6,12}\d)(?!\d)/g;
-    lines.forEach((l) => {
-      // תאריכים לא נחשבים (יש בהם נקודות/לוכסנים, אבל נוודא)
-      let m;
-      while ((m = idRe.exec(l.replace(/\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{4}/g, " ")))) {
-        const digits = m[1].replace(/\s+/g, "");
-        if (digits.length === 9 || digits.length === 8) cands.push(digits.padStart(9, "0"));
-      }
-    });
+    // סדר הספרות בטקסט עברית מה-OCR הפוך לפעמים (קבוצות הספרות מתהפכות), לכן קודם מחפשים
+    // בסריקה האנגלית-בלבד (digitText) שבה הסדר נשמר, ורק אחר כך בטקסט הרגיל.
+    const findIds = (txt) => {
+      const out = [];
+      String(txt || "").split(/\r?\n/).forEach((l) => {
+        const cl = l.replace(/\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{4}/g, " ");
+        const re = /(?<!\d)(\d[\d ]{6,12}\d)(?!\d)/g; let m;
+        while ((m = re.exec(cl))) {
+          const digits = m[1].replace(/\s+/g, "");
+          if (digits.length === 9 || digits.length === 8) out.push(digits.padStart(9, "0"));
+        }
+      });
+      return out;
+    };
+    const candsD = findIds(digitText), candsT = findIds(text);
+    const cands = candsD.concat(candsT);
     let id = "", idOk = false;
     const good = cands.find(idChecksumOk);
     if (good) { id = good; idOk = true; }
@@ -240,6 +246,16 @@
         if (validDate(d.d, d.m, d.y)) dates.push(d);
       }
     });
+    if (digitText) {
+      const seen = new Set(dates.map(key));
+      String(digitText).split(/\r?\n/).forEach((l) => {
+        let m; const re = /(\d{1,2})\s*[./\-]\s*(\d{1,2})\s*[./\-]\s*(\d{4})/g;
+        while ((m = re.exec(l))) {
+          const d = { d: +m[1], m: +m[2], y: +m[3], line: -10, pos: 0 };
+          if (validDate(d.d, d.m, d.y) && !seen.has(key(d))) { seen.add(key(d)); dates.push(d); }
+        }
+      });
+    }
     const labelOf = (dt) => {
       // תווית באותה שורה, ואם אין – בשורה הקודמת או הבאה (תלוי בפריסת הכרטיס)
       const near = [lines[dt.line], lines[dt.line - 1], lines[dt.line + 1]];
@@ -253,7 +269,17 @@
       return "";
     };
     let birth = null, issue = null, expiry = null;
+    // כשיש 3 תאריכים שונים ויותר, הסדר בכרטיס תמיד: לידה < הנפקה < תוקף. הסדר הכרונולוגי אמין
+    // יותר מהתוויות, שה-OCR מקלקל בקלות בעברית.
+    const uniq = []; dates.forEach((d) => { if (!uniq.some((u) => key(u) === key(d))) uniq.push(d); });
+    uniq.sort((a, b) => key(a) - key(b));
+    if (uniq.length >= 3) {
+      birth = uniq[0]; expiry = uniq[uniq.length - 1];
+      const mids = uniq.slice(1, -1);
+      issue = mids.find((d) => labelOf(d) === "issue") || mids[0];
+    }
     dates.forEach((dt) => {
+      if (uniq.length >= 3) return;
       const lb = labelOf(dt);
       if (lb === "birth" && !birth) birth = dt;
       else if (lb === "issue" && !issue) issue = dt;
@@ -317,8 +343,9 @@
   // הגדלה + שחור-לבן + מתיחת ניגודיות – משפר מאוד את הקריאה מצילום בטלפון
   function prepare(img) {
     const maxW = 2200;
-    const scale = Math.min(maxW / img.naturalWidth, 2.5);
-    const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    const scale = Math.min(maxW / iw, 2.5);
+    const w = Math.round(iw * scale), h = Math.round(ih * scale);
     const c = document.createElement("canvas"); c.width = w; c.height = h;
     const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
     const im = ctx.getImageData(0, 0, w, h), d = im.data;
@@ -379,26 +406,77 @@
     result.innerHTML = ""; rawBox.textContent = "(עדיין לא נסרקה תמונה – בחר תמונה למעלה)"; status.textContent = ""; fileInput.value = "";
   }
 
+  const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+  const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const MAX_PDF_PAGES = 4;
+
+  const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
+  function loadImage(url) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img); img.onerror = () => rej(new Error("לא ניתן לפתוח את הקובץ כתמונה"));
+      img.src = url;
+    });
+  }
+  // מחזיר רשימת קנבסים (עמוד אחד לתמונה, עד כמה עמודים ל-PDF)
+  async function toCanvases(f, setStatus) {
+    if (!isPdf(f)) {
+      const url = URL.createObjectURL(f);
+      try { return [prepare(await loadImage(url))]; } finally { URL.revokeObjectURL(url); }
+    }
+    setStatus("טוען רכיב קריאת PDF…");
+    if (!window.pdfjsLib) await loadScript(PDFJS);
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+    const pdf = await window.pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+    const out = [];
+    const n = Math.min(pdf.numPages, MAX_PDF_PAGES);
+    for (let i = 1; i <= n; i++) {
+      setStatus(`מעבד עמוד ${i} מתוך ${n}…`);
+      const page = await pdf.getPage(i);
+      const v1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(3, 2000 / v1.width) });
+      const c = document.createElement("canvas"); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      out.push(prepare(c));
+    }
+    return out;
+  }
+
   fileInput.addEventListener("change", async () => {
-    const f = fileInput.files && fileInput.files[0];
-    if (!f || busy) return;
+    const files = Array.from(fileInput.files || []);
+    if (!files.length || busy) return;
     busy = true; result.innerHTML = ""; rawBox.textContent = "(הסריקה מתבצעת…)";
     if (objUrl) URL.revokeObjectURL(objUrl);
-    objUrl = URL.createObjectURL(f);
-    preview.src = objUrl; preview.hidden = false;
+    objUrl = null; preview.hidden = true; preview.removeAttribute("src");
+    const firstImg = files.find((f) => !isPdf(f));
+    if (firstImg) { objUrl = URL.createObjectURL(firstImg); preview.src = objUrl; preview.hidden = false; }
     try {
+      const canvases = [];
+      for (const f of files) canvases.push(...(await toCanvases(f, (t) => { status.textContent = t; })));
       status.textContent = "טוען רכיב סריקה (בפעם הראשונה לוקח כמה שניות)…";
       if (!window.Tesseract) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js");
-      const img = new Image();
-      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("לא ניתן לפתוח את התמונה")); img.src = objUrl; });
-      const canvas = prepare(img);
-      status.textContent = "קורא את התמונה…";
-      const { data } = await window.Tesseract.recognize(canvas, "heb+eng", {
-        logger: (m) => { if (m.status === "recognizing text") status.textContent = `קורא את התמונה… ${Math.round(m.progress * 100)}%`; },
-      });
-      const parsed = parseIdText(data.text);
+      let all = "", digits = "";
+      for (let i = 0; i < canvases.length; i++) {
+        const tag = canvases.length > 1 ? ` (${i + 1}/${canvases.length})` : "";
+        status.textContent = "קורא את הקובץ…" + tag;
+        const { data } = await window.Tesseract.recognize(canvases[i], "heb+eng", {
+          logger: (m) => { if (m.status === "recognizing text") status.textContent = `קורא את הקובץ… ${Math.round(m.progress * 100)}%${tag}`; },
+        });
+        all += data.text + "\n";
+        // מעבר שני: ספרות בלבד (אנגלית) – שומר על סדר הספרות הנכון במספר הזהות ובתאריכים
+        try {
+          status.textContent = "בודק מספרים…" + tag;
+          const w = await window.Tesseract.createWorker("eng");
+          await w.setParameters({ tessedit_char_whitelist: "0123456789./- ", tessedit_pageseg_mode: "11" });
+          const r2 = await w.recognize(canvases[i]);
+          digits += r2.data.text + "\n";
+          await w.terminate();
+        } catch (e2) { /* המעבר המשלים נכשל – ממשיכים עם הטקסט הרגיל */ }
+      }
+      const parsed = parseIdText(all, undefined, digits);
       status.textContent = "הסריקה הסתיימה – בדוק את הערכים ותקן במידת הצורך";
-      render(parsed, data.text);
+      render(parsed, all + (digits ? "\n--- ספרות ---\n" + digits : ""));
     } catch (e) {
       status.textContent = "";
       rawBox.textContent = "(הסריקה נכשלה)";
