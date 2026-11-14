@@ -1,0 +1,223 @@
+/* סריקת ת.ז – הכול רץ בדפדפן (OCR מקומי). התמונה לא נשלחת לשרת ולא נשמרת. */
+(function () {
+  "use strict";
+
+  // ---------- לוגיקה טהורה (נבדקת בנפרד) ----------
+  function idChecksumOk(id) {
+    if (!/^\d{9}$/.test(id)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) {
+      let v = Number(id[i]) * (i % 2 === 0 ? 1 : 2);
+      if (v > 9) v -= 9;
+      sum += v;
+    }
+    return sum % 10 === 0;
+  }
+
+  function validDate(d, m, y) {
+    if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+    const dt = new Date(y, m - 1, d);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+  }
+
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const fmt = (d) => `${pad2(d.d)}/${pad2(d.m)}/${d.y}`;
+  const key = (d) => d.y * 10000 + d.m * 100 + d.d;
+
+  // מקבל את הטקסט שה-OCR קרא ומחזיר {id, idOk, birth, issue, expiry, notes[]}
+  function parseIdText(text, today) {
+    today = today || new Date();
+    const todayKey = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
+    const notes = [];
+    const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+    // --- מספר זהות ---
+    const cands = [];
+    const idRe = /(?<!\d)(\d[\d ]{6,12}\d)(?!\d)/g;
+    lines.forEach((l) => {
+      // תאריכים לא נחשבים (יש בהם נקודות/לוכסנים, אבל נוודא)
+      let m;
+      while ((m = idRe.exec(l.replace(/\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{4}/g, " ")))) {
+        const digits = m[1].replace(/\s+/g, "");
+        if (digits.length === 9 || digits.length === 8) cands.push(digits.padStart(9, "0"));
+      }
+    });
+    let id = "", idOk = false;
+    const good = cands.find(idChecksumOk);
+    if (good) { id = good; idOk = true; }
+    else if (cands.length) { id = cands[0]; notes.push("ספרת הביקורת של הת.ז לא תקינה – כנראה טעות קריאה, כדאי לתקן ידנית"); }
+    else notes.push("לא נמצא מספר זהות בן 9 ספרות");
+
+    // --- תאריכים ---
+    const dates = [];
+    const dRe = /(\d{1,2})\s*[./\-]\s*(\d{1,2})\s*[./\-]\s*(\d{4})/g;
+    lines.forEach((l, i) => {
+      let m;
+      while ((m = dRe.exec(l))) {
+        const d = { d: +m[1], m: +m[2], y: +m[3], line: i, pos: m.index };
+        if (validDate(d.d, d.m, d.y)) dates.push(d);
+      }
+    });
+    const labelOf = (dt) => {
+      // תווית באותה שורה, ואם אין – בשורה הקודמת או הבאה (תלוי בפריסת הכרטיס)
+      const near = [lines[dt.line], lines[dt.line - 1], lines[dt.line + 1]];
+      for (let k = 0; k < near.length; k++) {
+        const t = near[k] || "";
+        if (k > 0 && /\d{1,2}\s*[./\-]\s*\d{1,2}\s*[./\-]\s*\d{4}/.test(t)) continue; // שורה סמוכה עם תאריך אחר
+        if (/לידה|הדיל|Date of birth|DATE OF BIRTH/i.test(t)) return "birth";
+        if (/הנפקה|הקפנה|Date of issue|DATE OF ISSUE/i.test(t)) return "issue";
+        if (/תוקף|ףקות|Expiry|EXPIRY|Valid/i.test(t)) return "expiry";
+      }
+      return "";
+    };
+    let birth = null, issue = null, expiry = null;
+    dates.forEach((dt) => {
+      const lb = labelOf(dt);
+      if (lb === "birth" && !birth) birth = dt;
+      else if (lb === "issue" && !issue) issue = dt;
+      else if (lb === "expiry" && !expiry) expiry = dt;
+    });
+    // מה שנשאר בלי תווית – לפי היגיון: עתיד = תוקף, הכי ישן = לידה, הכי חדש בעבר = הנפקה
+    const rest = dates.filter((d) => d !== birth && d !== issue && d !== expiry);
+    rest.filter((d) => key(d) > todayKey).forEach((d) => { if (!expiry) expiry = d; });
+    const past = rest.filter((d) => key(d) <= todayKey).sort((a, b) => key(a) - key(b));
+    if (!birth && past.length) { birth = past.shift(); notes.push("תאריך הלידה נקבע לפי היגיון (התאריך הישן ביותר) ולא לפי תווית"); }
+    if (!issue && past.length) { issue = past.pop(); notes.push("תאריך ההנפקה נקבע לפי היגיון (התאריך החדש ביותר) ולא לפי תווית"); }
+    if (!birth) notes.push("לא נמצא תאריך לידה");
+    if (!issue) notes.push("לא נמצא תאריך הנפקה");
+    if (birth && issue && key(issue) <= key(birth)) notes.push("תאריך ההנפקה לפני תאריך הלידה – בדוק");
+    if (birth && key(birth) > todayKey) notes.push("תאריך הלידה בעתיד – בדוק");
+    return {
+      id, idOk,
+      birth: birth ? fmt(birth) : "", issue: issue ? fmt(issue) : "", expiry: expiry ? fmt(expiry) : "",
+      notes,
+    };
+  }
+
+  if (typeof window === "undefined") { module.exports = { parseIdText, idChecksumOk }; return; }
+
+  // ---------- ממשק ----------
+  const $ = (id) => document.getElementById(id);
+  const btnOpen = $("btn-idscan"), panel = $("idscan-panel");
+  if (!btnOpen || !panel) return;
+  const fileInput = $("idscan-file"), preview = $("idscan-preview"), status = $("idscan-status");
+  const result = $("idscan-result"), rawBox = $("idscan-raw");
+  let objUrl = null, busy = false;
+
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function toast(msg, isErr) {
+    const t = $("toast");
+    if (!t) { alert(msg); return; }
+    t.textContent = msg; t.classList.toggle("error", !!isErr); t.hidden = false;
+    clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, 3000);
+  }
+
+  btnOpen.addEventListener("click", () => {
+    ["results-panel", "reports-panel", "empty-state", "daily-panel"].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  ["btn-update", "btn-view", "btn-reports", "btn-create-row", "btn-daily"].forEach((id) => {
+    const b = $(id); if (b) b.addEventListener("click", () => { panel.hidden = true; });
+  });
+
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src; s.onload = res; s.onerror = () => rej(new Error("טעינת רכיב הסריקה נכשלה – בדוק חיבור לאינטרנט"));
+      document.head.appendChild(s);
+    });
+  }
+
+  // הגדלה + שחור-לבן + מתיחת ניגודיות – משפר מאוד את הקריאה מצילום בטלפון
+  function prepare(img) {
+    const maxW = 2200;
+    const scale = Math.min(maxW / img.naturalWidth, 2.5);
+    const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
+    const im = ctx.getImageData(0, 0, w, h), d = im.data;
+    let min = 255, max = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      d[i] = g; if (g < min) min = g; if (g > max) max = g;
+    }
+    const span = Math.max(1, max - min);
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.max(0, Math.min(255, ((d[i] - min) * 255) / span));
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(im, 0, 0);
+    return c;
+  }
+
+  function field(label, id, val, hint) {
+    return `<div class="ids-row"><label class="field-label" for="${id}">${label}</label>
+      <div class="ids-line"><input id="${id}" class="tz-input" inputmode="numeric" dir="ltr" value="${esc(val)}">
+      <button type="button" class="action-btn ids-copy" data-for="${id}">העתק</button></div>
+      ${hint ? `<div class="dl-note">${hint}</div>` : ""}</div>`;
+  }
+
+  function render(r, raw) {
+    const ageTxt = (() => {
+      const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(r.birth); if (!m) return "";
+      const t = new Date(); let a = t.getFullYear() - +m[3];
+      if (t.getMonth() + 1 < +m[2] || (t.getMonth() + 1 === +m[2] && t.getDate() < +m[1])) a--;
+      return `גיל: ${a}`;
+    })();
+    result.innerHTML =
+      field("מספר ת.ז", "ids-id", r.id, r.id ? (r.idOk ? "✔ ספרת הביקורת תקינה" : "⚠ ספרת הביקורת לא תקינה – בדוק מול התמונה") : "") +
+      field("תאריך לידה (dd/mm/yyyy)", "ids-birth", r.birth, ageTxt) +
+      field("תאריך הנפקה (dd/mm/yyyy)", "ids-issue", r.issue, "") +
+      (r.expiry ? field("תוקף (dd/mm/yyyy)", "ids-expiry", r.expiry, "") : "") +
+      (r.notes.length ? `<div class="dl-note">${r.notes.map(esc).join("<br>")}</div>` : "") +
+      `<div class="dl-actions"><button type="button" class="action-btn" id="ids-copyall">העתק הכול</button>
+        <button type="button" class="action-btn" id="ids-clear">נקה</button></div>
+      <div class="dl-note">תמיד כדאי לאמת מול התמונה – OCR יכול לטעות, במיוחד בצילום מטושטש או עם סנוור.</div>`;
+    rawBox.textContent = raw || "";
+    result.querySelectorAll(".ids-copy").forEach((b) => b.addEventListener("click", () => copy($(b.dataset.for).value)));
+    $("ids-copyall").addEventListener("click", () => {
+      const g = (i) => ($(i) ? $(i).value : "");
+      copy(`ת.ז: ${g("ids-id")}\nתאריך לידה: ${g("ids-birth")}\nתאריך הנפקה: ${g("ids-issue")}`);
+    });
+    $("ids-clear").addEventListener("click", clearAll);
+  }
+
+  async function copy(text) {
+    try { await navigator.clipboard.writeText(text); toast("הועתק"); }
+    catch (e) { toast("ההעתקה נכשלה – סמן והעתק ידנית", true); }
+  }
+
+  function clearAll() {
+    if (objUrl) URL.revokeObjectURL(objUrl);
+    objUrl = null; preview.hidden = true; preview.removeAttribute("src");
+    result.innerHTML = ""; rawBox.textContent = ""; status.textContent = ""; fileInput.value = "";
+  }
+
+  fileInput.addEventListener("change", async () => {
+    const f = fileInput.files && fileInput.files[0];
+    if (!f || busy) return;
+    busy = true; result.innerHTML = ""; rawBox.textContent = "";
+    if (objUrl) URL.revokeObjectURL(objUrl);
+    objUrl = URL.createObjectURL(f);
+    preview.src = objUrl; preview.hidden = false;
+    try {
+      status.textContent = "טוען רכיב סריקה (בפעם הראשונה לוקח כמה שניות)…";
+      if (!window.Tesseract) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js");
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("לא ניתן לפתוח את התמונה")); img.src = objUrl; });
+      const canvas = prepare(img);
+      status.textContent = "קורא את התמונה…";
+      const { data } = await window.Tesseract.recognize(canvas, "heb+eng", {
+        logger: (m) => { if (m.status === "recognizing text") status.textContent = `קורא את התמונה… ${Math.round(m.progress * 100)}%`; },
+      });
+      const parsed = parseIdText(data.text);
+      status.textContent = "הסריקה הסתיימה – בדוק את הערכים ותקן במידת הצורך";
+      render(parsed, data.text);
+    } catch (e) {
+      status.textContent = "";
+      result.innerHTML = `<div class="dl-bad">${esc(e.message || e)}</div>`;
+    } finally { busy = false; }
+  });
+})();
