@@ -104,6 +104,7 @@
   const fileInput = $("idscan-file"), preview = $("idscan-preview"), status = $("idscan-status");
   const result = $("idscan-result"), rawBox = $("idscan-raw");
   let objUrl = null, busy = false;
+  rawBox.textContent = "(עדיין לא נסרקה תמונה – בחר תמונה למעלה)";
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -176,7 +177,7 @@
       `<div class="dl-actions"><button type="button" class="action-btn" id="ids-copyall">העתק הכול</button>
         <button type="button" class="action-btn" id="ids-clear">נקה</button></div>
       <div class="dl-note">תמיד כדאי לאמת מול התמונה – OCR יכול לטעות, במיוחד בצילום מטושטש או עם סנוור.</div>`;
-    rawBox.textContent = raw || "";
+    rawBox.textContent = raw || "(לא נקרא טקסט מהתמונה)";
     result.querySelectorAll(".ids-copy").forEach((b) => b.addEventListener("click", () => copy($(b.dataset.for).value)));
     $("ids-copyall").addEventListener("click", () => {
       const g = (i) => ($(i) ? $(i).value : "");
@@ -193,13 +194,13 @@
   function clearAll() {
     if (objUrl) URL.revokeObjectURL(objUrl);
     objUrl = null; preview.hidden = true; preview.removeAttribute("src");
-    result.innerHTML = ""; rawBox.textContent = ""; status.textContent = ""; fileInput.value = "";
+    result.innerHTML = ""; rawBox.textContent = "(עדיין לא נסרקה תמונה – בחר תמונה למעלה)"; status.textContent = ""; fileInput.value = "";
   }
 
   fileInput.addEventListener("change", async () => {
     const f = fileInput.files && fileInput.files[0];
     if (!f || busy) return;
-    busy = true; result.innerHTML = ""; rawBox.textContent = "";
+    busy = true; result.innerHTML = ""; rawBox.textContent = "(הסריקה מתבצעת…)";
     if (objUrl) URL.revokeObjectURL(objUrl);
     objUrl = URL.createObjectURL(f);
     preview.src = objUrl; preview.hidden = false;
@@ -218,6 +219,7 @@
       render(parsed, data.text);
     } catch (e) {
       status.textContent = "";
+      rawBox.textContent = "(הסריקה נכשלה)";
       result.innerHTML = `<div class="dl-bad">${esc(e.message || e)}</div>`;
     } finally { busy = false; }
   });
