@@ -286,7 +286,10 @@
     const validId = (x) => /^\d{5,}$/.test(String(x).trim());
     const rows = [], deposits = [];
     const mk = (o) => Object.assign({ id: "", name: "", acc: "", amount: "", transfer_status: "", join_status: "",
-      reject_desc: "", reject_detail: "", request_type: "", product: "", deposit_date: "", expected_date: "", event_date: "" }, o);
+      reject_desc: "", reject_detail: "", request_type: "", product: "", deposit_date: "", expected_date: "", event_date: "",
+      no_transfer: false, first_deposit: "" }, o);
+    const dg = (x) => String(x == null ? "" : x).replace(/\D/g, "").replace(/^0+/, "");
+    const inAccs = new Set(), inIdProd = new Set();   // הקופות/עמיתים שמופיעים ב"סטטוס ניודים נכנסים"
 
     // 1. ניודים נכנסים
     table(sheet("סטטוס ניודים נכנסים"), ["ת. ז עמית", "מצב העברה"]).forEach((g) => {
@@ -296,6 +299,8 @@
       const why = txt(g("סיבת דחיית הבקשה"));
       if (why) status += " - " + why;
       const done = status.startsWith("ניוד הושלם") || status.startsWith("ניוד מבוטל");
+      const ra = dg(g("מספר חשבון במקבלת")); if (ra) inAccs.add(ra);
+      inIdProd.add(id + "|" + mapProduct(g("שם קופה מקבלת")));
       rows.push(mk({ id, name: txt(g("שם עמית")), acc: txt(g("מספר חשבון במעבירה")),
         amount: txt(g("סכום העברה בפועל")), transfer_status: status,
         expected_date: done ? "" : txt(g("תאריך העברה צפוי")), product: mapProduct(g("שם קופה מקבלת")) }));
@@ -311,10 +316,14 @@
       const product = mapProduct(g("שם קופה"));
       const dd = txt(g("תאריך הפקדה ראשונה"));
       const dkey = [id, product, acc, dd].join("|");
+      // הפקדה ראשונה בקופה שאין אותה ב"סטטוס ניודים נכנסים" = קופה ללא ניוד
+      const recv = dg(g("מספר חשבון"));
+      const noTransfer = recv ? !inAccs.has(recv) : !inIdProd.has(id + "|" + product);
       if (!seenDep.has(dkey)) {
         seenDep.add(dkey);
         rows.push(mk({ id, name: txt(g("שם עמית")), acc, product, join_status: "הקופה נפתחה",
-          request_type: acc ? "הצטרפות+ניוד" : "הצטרפות", deposit_date: dd, event_date: dd }));
+          request_type: (acc && !noTransfer) ? "הצטרפות+ניוד" : "הצטרפות", deposit_date: dd, event_date: dd,
+          no_transfer: noTransfer, first_deposit: noTransfer ? txt(g("סכום הפקדה ראשונה")) : "" }));
       }
       firstDep.add(id + "|" + product);
       if (!acc) deposits.push({ id, product, fund: txt(g("מספר חשבון")), status: txt(g("מעמד עמית")), amount: txt(g("סכום הפקדה ראשונה")) });
