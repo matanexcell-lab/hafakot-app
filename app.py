@@ -518,6 +518,10 @@ def classify_report_row(r, cfg):
     amount = parse_amount(r.get("amount", ""))
     if amount > 0:
         return "done", DONE_TEXT, amount
+    fd = parse_amount(r.get("first_deposit", ""))
+    if r.get("no_transfer") and fd > 0:
+        # first deposit into a fund that is not in the incoming-transfers sheet = a fund WITHOUT transfer
+        return "firstdep", cfg["joined_deposit_text"], fd
     transfer_status = re.sub(r"\s+", " ", (r.get("transfer_status") or "")).strip()
     note = (r.get("reject_desc") or "").strip()
     if transfer_status in cfg["pending_statuses"]:
@@ -861,7 +865,18 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                         level = "ok"
                 else:
                     level, note = "warn", (note + " · " if note else "") + dep["reason"] + " – הסכום לא נכתב"
-            if kind == "join" and last_status_text(base["current_status"]) == text:
+            if kind == "join" and not amount and not is_with_transfer(base["product"]) and text == cfg["joined_deposit_text"]:
+                fd_reps = [f[0] for f in found if f[0].get("no_transfer") and parse_amount(f[0].get("first_deposit", "")) > 0]
+                if fd_reps:
+                    amount = round(sum(parse_amount(x["first_deposit"]) for x in fd_reps), 2)
+                    note = (note + " · " if note else "") + ("הפקדה ראשונה בקופה שאינה מופיעה ב'סטטוס ניודים נכנסים' – קופה ללא ניוד. "
+                                                              f"סכום ההפקדה ({fmt_amount(amount)}) יירשם בניוד בפועל")
+                    if len(fd_reps) > 1:
+                        level = "warn"
+                        note += f" · {len(fd_reps)} שורות הפקדה ראשונה"
+                    elif level == "skip":
+                        level = "ok"
+            if kind == "join" and not amount and last_status_text(base["current_status"]) == text:
                 level, note, kind = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב", ""
             base.update(level=level, kind=kind, text=text, amount=amount, note=note, report=report_view)
             items.append(base)
@@ -871,6 +886,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
         pending = [f for f in found if f[1] == "pending"]
         reject = [f for f in found if f[1] == "reject"]
         none_ = [f for f in found if f[1] == "none"]
+        firstdep = [f for f in found if f[1] == "firstdep"]
         report_view = [_rep_view(f[0]) for f in found]
         level, kind, text, amount, note = "ok", "", "", 0, ""
 
@@ -897,6 +913,19 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 dnote = (f"סטייה של {deviation * 100:.0f}% – ניוד צפוי {fmt_amount(expected)}, "
                          f"בדוח {fmt_amount(amount)}. השורה לא תיצבע בירוק")
                 note = (note + " · " if note else "") + dnote
+        elif firstdep:
+            kind, text = "join", cfg["joined_deposit_text"]
+            if is_with_transfer(base["product"]):
+                amount = 0
+                level, note = "warn", "הפקדה ראשונה, אבל המוצר באתר הוא 'עם ניוד' – הסכום לא נכתב ולא תיצבע בירוק"
+            else:
+                amount = round(sum(f[3] for f in firstdep), 2)
+                note = ("הפקדה ראשונה בקופה שאינה מופיעה ב'סטטוס ניודים נכנסים' – קופה ללא ניוד. "
+                        f"סכום ההפקדה ({fmt_amount(amount)}) יירשם בניוד בפועל")
+            if len(firstdep) > 1:
+                level, note = "warn", note + f" · {len(firstdep)} שורות הפקדה ראשונה באותו חשבון"
+            elif any(len(usage.get(f[0]["_n"], [])) > 1 for f in firstdep):
+                level, note = "warn", note + " · שורת דוח אחת מתאימה ליותר משורה אחת באתר"
         elif pending:
             texts = {f[2] for f in pending}
             if len(texts) > 1:
@@ -922,7 +951,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
             level = "warn"
             note = "בדוח יש גם שורות מסוג אחר לאותו חשבון (למשל דחייה לצד ניוד שבוצע) – נבחר הניוד שבוצע"
 
-        if kind and last_status_text(base["current_status"]) == text:
+        if kind and last_status_text(base["current_status"]) == text and not (kind == "join" and amount > 0):
             level, note = "skip", "הסטטוס הזה כבר רשום אחרון בהיסטוריה – לא יתווסף שוב"
             kind = ""
 
@@ -967,7 +996,7 @@ def _rep_view(rep):
     return {
         "name": rep.get("name", ""),
         "acc": rep.get("acc", ""),
-        "amount": rep.get("amount", ""),
+        "amount": rep.get("amount", "") or rep.get("first_deposit", ""),
         "transfer_status": rep.get("transfer_status", ""),
         "join_status": rep.get("join_status", ""),
         "reject_desc": rep.get("reject_desc", ""),
