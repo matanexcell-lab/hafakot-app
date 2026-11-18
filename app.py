@@ -430,7 +430,8 @@ DAILY_COMPANIES = {
     "meitav": {
         "label": "מיטב",
         "site_company": "מיטב",  # substring that must appear in the site's 'חברה' column
-        "pending_statuses": ["ממתין להפקדה ראשונה", "בתהליך קליטת סדין"],
+        "pending_statuses": ["ממתין להפקדה ראשונה", "בתהליך קליטת סדין", "ממתין להעברת כספים"],
+        "expected_date_statuses": ["ממתין להעברת כספים"],   # only these get ", ניוד צפוי ב-<date>"
         "reject_word": "דחייה",
         "joined_word": "הקופה נפתחה",
         "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
@@ -528,7 +529,8 @@ def classify_report_row(r, cfg):
         text = transfer_status
         if cfg.get("pending_with_note") and note:
             text += " - " + note
-        exp = (r.get("expected_date") or "").strip() if cfg.get("with_expected_date") else ""
+        want_exp = cfg.get("with_expected_date") or transfer_status in cfg.get("expected_date_statuses", [])
+        exp = (r.get("expected_date") or "").strip() if want_exp else ""
         if exp and re.search(r"\d", exp):
             text += ", ניוד צפוי ב-" + exp
         return "pending", text, 0
