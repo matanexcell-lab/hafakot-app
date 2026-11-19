@@ -1215,6 +1215,95 @@ def api_search():
     return jsonify({"headers": headers, "rows": matched})
 
 
+# ---------- custom status options (shared between devices: stored in a tab of the same spreadsheet) ----------
+STATUS_TAB = "סטטוסים מותאמים"
+
+
+def _status_tab_exists():
+    meta = _api_get({"fields": "sheets.properties.title"})
+    return any(sh["properties"]["title"] == STATUS_TAB for sh in meta.get("sheets", []))
+
+
+def _ensure_status_tab():
+    if _status_tab_exists():
+        return
+    _api_batch_update([{"addSheet": {"properties": {"title": STATUS_TAB, "rightToLeft": True}}}])
+    _api_put_values(f"'{STATUS_TAB}'!A1:B1", ["סוג גיליון", "סטטוס"])
+
+
+def read_custom_statuses():
+    """-> list of (sheet_type, text); empty when the tab does not exist yet."""
+    if not _status_tab_exists():
+        return []
+    http = get_http()
+    url = f"{SHEETS_API_BASE}/{SPREADSHEET_ID}/values/{quote(chr(39) + STATUS_TAB + chr(39) + '!A2:B', safe='')}"
+    resp = http.get(url)
+    if not resp.ok:
+        raise RuntimeError(f"שגיאה מגוגל שיטס: {resp.status_code} {resp.text[:300]}")
+    out = []
+    for row in resp.json().get("values", []):
+        if len(row) >= 2 and row[0] in SHEET_NAMES and row[1].strip():
+            out.append((row[0], row[1].strip()))
+    return out
+
+
+def _write_custom_statuses(items):
+    http = get_http()
+    rng = quote(f"'{STATUS_TAB}'!A2:B", safe="")
+    http.post(f"{SHEETS_API_BASE}/{SPREADSHEET_ID}/values/{rng}:clear", json={})
+    if items:
+        resp = http.put(
+            f"{SHEETS_API_BASE}/{SPREADSHEET_ID}/values/{quote(f'{chr(39)}{STATUS_TAB}{chr(39)}!A2:B{len(items) + 1}', safe='')}",
+            params={"valueInputOption": "RAW"},
+            json={"values": [[t, x] for t, x in items]},
+        )
+        if not resp.ok:
+            raise RuntimeError(f"שגיאה בשמירה לגוגל שיטס: {resp.status_code} {resp.text[:300]}")
+
+
+@app.route("/api/status_options", methods=["GET"])
+@login_required
+def api_status_options():
+    try:
+        items = read_custom_statuses()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({k: [x for t, x in items if t == k] for k in SHEET_NAMES})
+
+
+@app.route("/api/status_options/add", methods=["POST"])
+@login_required
+def api_status_options_add():
+    data = request.get_json(force=True)
+    sheet_type, text = data.get("sheet_type"), re.sub(r"\s+", " ", (data.get("text") or "")).strip()
+    if sheet_type not in SHEET_NAMES or not text:
+        return jsonify({"error": "נתונים חסרים"}), 400
+    if len(text) > 200:
+        return jsonify({"error": "הטקסט ארוך מדי"}), 400
+    try:
+        _ensure_status_tab()
+        items = read_custom_statuses()
+        if (sheet_type, text) not in items:
+            items.append((sheet_type, text))
+            _write_custom_statuses(items)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({k: [x for t, x in items if t == k] for k in SHEET_NAMES})
+
+
+@app.route("/api/status_options/delete", methods=["POST"])
+@login_required
+def api_status_options_delete():
+    data = request.get_json(force=True)
+    sheet_type, text = data.get("sheet_type"), (data.get("text") or "").strip()
+    try:
+        items = [it for it in read_custom_statuses() if it != (sheet_type, text)]
+        _write_custom_statuses(items)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({k: [x for t, x in items if t == k] for k in SHEET_NAMES})
+
+
 @app.route("/api/headers", methods=["POST"])
 @login_required
 def api_headers():
