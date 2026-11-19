@@ -1205,9 +1205,12 @@ def api_search():
                 and parse_month_key(r["values"][date_idx]) == month
             ]
     else:
+        # leading zeros are ignored on both sides: 66690355 finds 066690355 (and vice versa)
+        q = norm_id(query)
         matched = [
-            r for r in rows if r["values"] and r["values"][ID_COLUMN_INDEX].strip() == query
-        ]
+            r for r in rows
+            if q and len(r["values"]) > ID_COLUMN_INDEX and norm_id(r["values"][ID_COLUMN_INDEX]) == q
+        ] if q else []
 
     if mode == "update":
         matched = [r for r in matched if not r["is_green"] and not r["is_red"]]
