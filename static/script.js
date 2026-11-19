@@ -27,6 +27,24 @@ Line: ${e.lineno}:${e.colno}</div>`
     ],
     detail: ["הופק"],
   };
+  // סטטוסים שנוספו מהאתר – נשמרים בגיליון (לשונית "סטטוסים מותאמים"), לכן משותפים בין מחשב וטלפון
+  const esc = (x) => String(x == null ? "" : x).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const ADD_STATUS_VALUE = "__add_status__";
+  const customStatuses = { pension: [], detail: [] };
+  function allStatusOptions(type) {
+    const base = STATUS_OPTIONS[type] || [];
+    return base.concat((customStatuses[type] || []).filter((x) => !base.includes(x)));
+  }
+  async function statusApi(path, body) {
+    const res = await fetch(path, body
+      ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : undefined);
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || "שגיאה");
+    customStatuses.pension = data.pension || [];
+    customStatuses.detail = data.detail || [];
+  }
+  const customStatusesReady = statusApi("/api/status_options").catch(() => {});
   const COMPANY_OPTIONS_BY_TYPE = {
     pension: ["הראל", "ילין לפידות", "מיטב", "מגדל", "כלל", "הפניקס", "אלטשולר שחם", "אנליסט", "מור", "הכשרה"],
     detail: ["הראל", "מגדל", "כלל", "הפניקס", "הכשרה"],
@@ -791,26 +809,74 @@ Line: ${e.lineno}:${e.colno}</div>`
     select.style.fontFamily = "inherit";
     select.style.fontSize = "14px";
 
-    const options = STATUS_OPTIONS[state.sheetType] || [];
-    let optionsHtml = `<option value="">בחר עדכון…</option>`;
-    options.forEach((opt) => {
-      optionsHtml += `<option value="${opt}">${opt}</option>`;
-    });
-    optionsHtml += `<option value="${OTHER_VALUE}">אחר…</option>`;
-    select.innerHTML = optionsHtml;
-    field.appendChild(select);
-
     const otherInput = document.createElement("input");
     otherInput.type = "text";
     otherInput.placeholder = "כתוב כאן את העדכון";
     otherInput.dataset.statusOtherInput = "1";
     otherInput.style.marginTop = "8px";
     otherInput.hidden = true;
-    field.appendChild(otherInput);
 
-    select.addEventListener("change", () => {
+    // שורת "הוספת סטטוס קבוע לרשימה"
+    const addRow = document.createElement("div");
+    addRow.style.cssText = "display:flex;gap:8px;margin-top:8px";
+    addRow.hidden = true;
+    const addInput = document.createElement("input");
+    addInput.type = "text"; addInput.placeholder = "טקסט הסטטוס החדש"; addInput.style.flex = "1";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button"; addBtn.className = "action-btn primary"; addBtn.textContent = "הוסף לרשימה";
+    addBtn.style.cssText = "flex:none;width:auto;padding:8px 14px";
+    addRow.appendChild(addInput); addRow.appendChild(addBtn);
+
+    // הסרת סטטוס מותאם שנבחר
+    const delBtn = document.createElement("button");
+    delBtn.type = "button"; delBtn.className = "action-btn"; delBtn.textContent = "הסר סטטוס זה מהרשימה";
+    delBtn.style.cssText = "margin-top:8px;width:auto;padding:6px 12px;font-size:12px";
+    delBtn.hidden = true;
+
+    function buildOptions(selected) {
+      const type = state.sheetType;
+      let html = `<option value="">בחר עדכון…</option>`;
+      allStatusOptions(type).forEach((opt) => {
+        html += `<option value="${esc(opt)}"${opt === selected ? " selected" : ""}>${esc(opt)}</option>`;
+      });
+      html += `<option value="${OTHER_VALUE}">אחר… (חד־פעמי)</option>`;
+      html += `<option value="${ADD_STATUS_VALUE}">➕ הוספת סטטוס חדש לרשימה…</option>`;
+      select.innerHTML = html;
+    }
+    function refreshExtras() {
       otherInput.hidden = select.value !== OTHER_VALUE;
       if (otherInput.hidden) otherInput.value = "";
+      addRow.hidden = select.value !== ADD_STATUS_VALUE;
+      delBtn.hidden = !(customStatuses[state.sheetType] || []).includes(select.value);
+    }
+    buildOptions("");
+    customStatusesReady.then(() => { const cur = select.value; buildOptions(cur); refreshExtras(); });
+
+    field.appendChild(select);
+    field.appendChild(otherInput);
+    field.appendChild(addRow);
+    field.appendChild(delBtn);
+
+    select.addEventListener("change", refreshExtras);
+    addBtn.addEventListener("click", async () => {
+      const text = addInput.value.replace(/\s+/g, " ").trim();
+      if (!text) { showToast("כתוב את טקסט הסטטוס", true); return; }
+      addBtn.disabled = true;
+      try {
+        await statusApi("/api/status_options/add", { sheet_type: state.sheetType, text });
+        buildOptions(text); addInput.value = ""; refreshExtras();
+        showToast("הסטטוס נוסף לרשימה (מסונכרן בכל המכשירים)");
+      } catch (e) { showToast(e.message || "ההוספה נכשלה", true); }
+      addBtn.disabled = false;
+    });
+    delBtn.addEventListener("click", async () => {
+      const text = select.value;
+      if (!text || !confirm(`להסיר את "${text}" מהרשימה? (עדכונים שכבר נרשמו בשורות לא ישתנו)`)) return;
+      try {
+        await statusApi("/api/status_options/delete", { sheet_type: state.sheetType, text });
+        buildOptions(""); refreshExtras();
+        showToast("הסטטוס הוסר מהרשימה");
+      } catch (e) { showToast(e.message || "ההסרה נכשלה", true); }
     });
 
     modalBody.appendChild(field);
@@ -1148,6 +1214,10 @@ Line: ${e.lineno}:${e.colno}</div>`
     const pendingStatusLines = [];
 
     const statusSelect = modalBody.querySelector("select[data-status-select]");
+    if (statusSelect && statusSelect.value === ADD_STATUS_VALUE) {
+      showToast("סיימת להוסיף סטטוס? לחץ 'הוסף לרשימה' או בחר סטטוס אחר", true);
+      return;
+    }
     if (statusSelect && statusSelect.value) {
       let text = statusSelect.value;
       if (text === OTHER_VALUE) {
