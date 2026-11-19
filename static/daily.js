@@ -76,6 +76,16 @@
     },
   };
 
+  // אנליסט – דוח עם גיליונות "העברות פנימה" / "הצטרפויות" / "הפקדות" (שורה לכל מסלול) – ראה parseAnalyst
+  ADAPTERS.analyst = {
+    label: "אנליסט",
+    sheetMatch: "העברות פנימה",
+    headers: { id: "ת.ז", transfer_status: "סטאטוס בקשה" },
+    required: ["id"],
+    headerKeys: ["id"],
+    altParser: "analyst",
+  };
+
   const $ = (id) => document.getElementById(id);
   const btnOpen = $("btn-daily");
   const panel = $("daily-panel");
@@ -362,11 +372,141 @@
     return { rows, deposits };
   }
 
+  // ---------- אנליסט ----------
+  // כל ניוד/הצטרפות מופיע בדוח בשורה נפרדת לכל מסלול השקעה. מאחדים לפי ת.ז + קופה מעבירה + מוצר:
+  // "בוצע" רק אם כל המסלולים בוצעו; הסכום – ראה pickAmount.
+  function parseAnalyst(buf) {
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const p2 = (n) => String(n).padStart(2, "0");
+    const txt = (x) => {
+      if (x instanceof Date) {
+        const d = new Date(x.getTime() + 12 * 3600 * 1000);
+        return `${p2(d.getUTCDate())}/${p2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+      }
+      return String(x == null ? "" : x).replace(/\s+/g, " ").trim();
+    };
+    const mapProduct = (s) => {
+      const n = norm(s);
+      if (n.includes("השתלמות")) return "קרן השתלמות";
+      if (n.includes("להשקעה")) return "קופת גמל להשקעה";
+      if (n.includes("פנסיה")) return "קרן פנסיה";
+      if (n.includes("גמל") || n.includes("תגמולים")) return "קופת גמל";
+      return txt(s);
+    };
+    const sheet = (key) => {
+      const sn = wb.SheetNames.find((n) => norm(n).includes(norm(key)));
+      return sn ? XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: "" }) : null;
+    };
+    const table = (grid, needed) => {
+      if (!grid) return [];
+      const nn = needed.map(norm);
+      let hr = -1;
+      for (let i = 0; i < Math.min(grid.length, 30); i++) {
+        const c = grid[i].map(norm);
+        if (nn.every((n) => c.includes(n))) { hr = i; break; }
+      }
+      if (hr === -1) return [];
+      const hc = grid[hr].map(norm);
+      const out = [];
+      for (let i = hr + 1; i < grid.length; i++) {
+        const g = grid[i];
+        out.push((h) => { const k = hc.indexOf(norm(h)); return k < 0 ? "" : g[k]; });
+      }
+      return out;
+    };
+    const num = (x) => { const v = parseFloat(String(x == null ? "" : x).replace(/,/g, "")); return isFinite(v) ? v : 0; };
+    const dg = (x) => String(x == null ? "" : x).replace(/\D/g, "").replace(/^0+/, "");
+    const dkey = (t) => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t); return m ? +m[3] * 10000 + +m[2] * 100 + +m[1] : 0; };
+    const validId = (x) => /^\d{5,}$/.test(String(x).trim());
+    const mk = (o) => Object.assign({ id: "", name: "", acc: "", amount: "", transfer_status: "", join_status: "",
+      reject_desc: "", reject_detail: "", request_type: "", product: "", deposit_date: "", expected_date: "", event_date: "",
+      no_transfer: false, first_deposit: "" }, o);
+    const rows = [];
+
+    // 1. העברות פנימה – איחוד מסלולים
+    const groups = new Map();
+    table(sheet("העברות פנימה"), ["ת.ז", "סטאטוס בקשה"]).forEach((g) => {
+      const id = txt(g("ת.ז"));
+      if (!validId(id)) return;
+      const product = mapProduct(g("שם מסלול"));
+      const acc = txt(g("מספר חשבון מעביר"));
+      const k = [id, dg(acc) || acc, product].join("|");
+      if (!groups.has(k)) groups.set(k, { id, name: txt(g("שם מלא")), acc, product, statuses: [], amounts: [], expected: "", why: "" });
+      const o = groups.get(k);
+      o.statuses.push(txt(g("סטאטוס בקשה")));
+      const am = num(g("סכום העברה בדוח")); if (am > 0) o.amounts.push(am);
+      if (!o.expected) o.expected = txt(g("צפי לביצוע העברה"));
+      if (!o.why) o.why = txt(g("סיבת ליקוי/ תקול"));
+    });
+    // הדוח מציג בכל שורת מסלול סכום קרוב לסכום הניוד כולו (לא חלק ממנו), לכן לוקחים את הסכום הנפוץ
+    // ביותר בין המסלולים (ובשוויון – הראשון) ולא מסכמים.
+    const pickAmount = (arr) => {
+      if (!arr.length) return 0;
+      const cnt = new Map(); arr.forEach((a) => cnt.set(a, (cnt.get(a) || 0) + 1));
+      let best = arr[0]; cnt.forEach((c, a) => { if (c > cnt.get(best)) best = a; });
+      return best;
+    };
+    groups.forEach((o) => {
+      o.amount = pickAmount(o.amounts);
+      const allDone = o.statuses.every((st) => st === "בוצע");
+      const notDone = o.statuses.find((st) => st !== "בוצע") || "";
+      rows.push(mk({ id: o.id, name: o.name, acc: o.acc, product: o.product,
+        amount: allDone && o.amount > 0 ? String(o.amount) : "",
+        transfer_status: allDone ? "בוצע" : notDone,
+        reject_desc: o.why, expected_date: allDone ? "" : o.expected }));
+    });
+
+    // 2. הפקדות – לפי מספר עמית (קוד)
+    const deps = new Map();   // קוד עמית -> [{date, key, amount}]
+    table(sheet("הפקדות"), ["ת.ז", "מספר עמית (קוד)", 'סה"כ']).forEach((g) => {
+      const code = dg(g("מספר עמית (קוד)"));
+      const d = txt(g("תאריך ביצוע"));
+      if (!code || !dkey(d)) return;
+      if (!deps.has(code)) deps.set(code, []);
+      deps.get(code).push({ date: d, key: dkey(d), amount: num(g('סה"כ')) });
+    });
+    const firstDeposit = (code, joinDate) => {
+      const list = (deps.get(dg(code)) || []).filter((x) => !dkey(joinDate) || x.key >= dkey(joinDate));
+      if (!list.length) return null;
+      const first = Math.min(...list.map((x) => x.key));
+      const same = list.filter((x) => x.key === first);
+      return { date: same[0].date, amount: Math.round(same.reduce((a, x) => a + x.amount, 0) * 100) / 100 };
+    };
+
+    // 3. הצטרפויות (שורה לכל מסלול -> שורה אחת לכל ת.ז + קופה + מוצר)
+    const seen = new Set();
+    table(sheet("הצטרפויות"), ["ת.ז", "תאריך הצטרפות"]).forEach((g) => {
+      const id = txt(g("ת.ז"));
+      if (!validId(id)) return;
+      const product = mapProduct(g("שם מסלול"));
+      const acc = txt(g("קופה מעבירה"));
+      const code = txt(g("מספר עמית (קוד)"));
+      const withTransfer = /העברה|ניוד/.test(txt(g("סוג הצטרפות")));
+      const key = [id, code, product, acc].join("|");
+      if (seen.has(key)) return;
+      seen.add(key);
+      const jd = txt(g("תאריך הצטרפות"));
+      const fd = firstDeposit(code, jd);
+      const noTransfer = !withTransfer;
+      rows.push(mk({ id, name: txt(g("שם מלא")), acc, product, join_status: "הקופה נפתחה",
+        request_type: withTransfer ? "הצטרפות+ניוד" : "הצטרפות",
+        deposit_date: fd ? fd.date : "", event_date: fd ? fd.date : jd,
+        no_transfer: noTransfer && !!fd, first_deposit: noTransfer && fd ? String(fd.amount) : "",
+        reject_desc: txt(g("סיבת ליקוי/ תקול")) }));
+    });
+    return { rows, deposits: [] };
+  }
+
   function parseReport(buf, ad) {
     const wb = XLSX.read(buf, { type: "array" });
     const want = norm(ad.sheetMatch);
     const sheetName = wb.SheetNames.find((n) => norm(n).includes(want));
     altDeposits = null;
+    if (ad.altParser === "analyst") {
+      const res = parseAnalyst(buf);
+      altDeposits = res.deposits;
+      return res.rows;
+    }
     if (!sheetName && ad.altParser === "mor2" && wb.SheetNames.some((n) => norm(n).includes(norm("סטטוס ניודים נכנסים")))) {
       const res = parseMor2(buf);
       altDeposits = res.deposits;
