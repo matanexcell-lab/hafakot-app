@@ -455,6 +455,20 @@ DAILY_COMPANIES = {
         "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
         "join_only_request": "הצטרפות",
     },
+    # אנליסט: גיליונות "העברות פנימה" / "הצטרפויות" / "הפקדות" (מסלולים כבר מאוחדים בדפדפן)
+    "analyst": {
+        "label": "אנליסט",
+        "site_company": "אנליסט",
+        "pending_statuses": [],
+        "pending_any": True,                # any other status text is written as-is (pending)
+        "with_expected_date": True,         # append the expected transfer date (pending rows only)
+        "reject_transfer_statuses": ["נדחתה"],   # -> "דחייה <סיבת ליקוי>"
+        "reject_word": "דחייה",
+        "joined_word": "הקופה נפתחה",
+        "joined_deposit_text": "הקופה נפתחה ובוצעה הפקדה ראשונה",
+        "joined_pending_text": "הקופה נפתחה וממתינה להפקדה ראשונה",
+        "join_only_request": "הצטרפות",
+    },
     # מור: "מעקב יומי תהליכי ניוד והצטרפות" - amount in 'סכום ניוד' => done; any other status as-is
     "mor": {
         "label": "מור",
@@ -534,6 +548,8 @@ def classify_report_row(r, cfg):
         if exp and re.search(r"\d", exp):
             text += ", ניוד צפוי ב-" + exp
         return "pending", text, 0
+    if transfer_status and transfer_status in cfg.get("reject_transfer_statuses", []):
+        return "reject", cfg["reject_word"] + (" " + note if note else ""), 0
     if cfg.get("pending_any"):
         parts = [transfer_status] if transfer_status else []
         waiting = "ממתין להפקדה ראשונה"
@@ -871,7 +887,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 fd_reps = [f[0] for f in found if f[0].get("no_transfer") and parse_amount(f[0].get("first_deposit", "")) > 0]
                 if fd_reps:
                     amount = round(sum(parse_amount(x["first_deposit"]) for x in fd_reps), 2)
-                    note = (note + " · " if note else "") + ("הפקדה ראשונה בקופה שאינה מופיעה ב'סטטוס ניודים נכנסים' – קופה ללא ניוד. "
+                    note = (note + " · " if note else "") + ("הפקדה ראשונה בקופה ללא ניוד (אין לה ניוד בדוח). "
                                                               f"סכום ההפקדה ({fmt_amount(amount)}) יירשם בניוד בפועל")
                     if len(fd_reps) > 1:
                         level = "warn"
@@ -922,7 +938,7 @@ def plan_daily_updates(company_key, report_rows, headers, sheet_rows, pilot_ids=
                 level, note = "warn", "הפקדה ראשונה, אבל המוצר באתר הוא 'עם ניוד' – הסכום לא נכתב ולא תיצבע בירוק"
             else:
                 amount = round(sum(f[3] for f in firstdep), 2)
-                note = ("הפקדה ראשונה בקופה שאינה מופיעה ב'סטטוס ניודים נכנסים' – קופה ללא ניוד. "
+                note = ("הפקדה ראשונה בקופה ללא ניוד (אין לה ניוד בדוח). "
                         f"סכום ההפקדה ({fmt_amount(amount)}) יירשם בניוד בפועל")
             if len(firstdep) > 1:
                 level, note = "warn", note + f" · {len(firstdep)} שורות הפקדה ראשונה באותו חשבון"
