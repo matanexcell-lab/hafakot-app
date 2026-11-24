@@ -1207,13 +1207,16 @@ def api_search():
 
         month = (data.get("month") or "").strip()
         if month:
-            if H_DATE not in headers:
-                return jsonify({"error": f"לא נמצאה עמודה בשם '{H_DATE}'"}), 500
-            date_idx = headers.index(H_DATE)
+            # pension: one date column; detail ("פרט"): sent-to-insurer date or production date
+            want = [H_DATE] if sheet_type == "pension" else [DETAIL_DATE_EXPECTED, DETAIL_DATE_ACTUAL]
+            date_idxs = [headers.index(h) for h in want if h in headers]
+            if not date_idxs:
+                return jsonify({"error": "לא נמצאה עמודת תאריך: " + " / ".join(want)}), 500
             matched = [
                 r for r in matched
-                if r["values"] and date_idx < len(r["values"])
-                and parse_month_key(r["values"][date_idx]) == month
+                if r["values"] and any(
+                    i < len(r["values"]) and parse_month_key(r["values"][i]) == month for i in date_idxs
+                )
             ]
     else:
         # leading zeros are ignored on both sides: 66690355 finds 066690355 (and vice versa)
