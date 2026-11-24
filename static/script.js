@@ -244,6 +244,9 @@ Line: ${e.lineno}:${e.colno}</div>`
     if (state.sheetType === "pension") {
       html += `<option value="${REPORT_PRODUCT_GROUP_VALUE}">${REPORT_PRODUCT_GROUP_LABEL}</option>`;
     }
+    if (state.sheetType === "detail") {
+      html += `<option value="__group_detail_all__">כל המוצרים (הכל יחד)</option>`;
+    }
     html += config.options.map((opt) => `<option value="${opt}">${opt}</option>`).join("");
     productSearchSelect.innerHTML = html;
   }
