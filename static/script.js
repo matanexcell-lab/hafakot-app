@@ -187,7 +187,11 @@ Line: ${e.lineno}:${e.colno}</div>`
   }
 
   function getVal(headers, row, headerName) {
-    const idx = headers.indexOf(headerName);
+    let idx = headers.indexOf(headerName);
+    if (idx === -1) {   // tolerate stray spaces in the sheet's header cell
+      const want = headerName.replace(/\s+/g, " ").trim();
+      idx = headers.findIndex((h) => String(h || "").replace(/\s+/g, " ").trim() === want);
+    }
     if (idx === -1) return "";
     return (row.values[idx] || "").trim();
   }
