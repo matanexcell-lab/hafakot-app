@@ -17,6 +17,7 @@ Line: ${e.lineno}:${e.colno}</div>`
   const H_STATUS = "סטטוס הפקה";
   const H_LAST_UPDATE = "תאריך עדכון אחרון";
   const H_TRANSFER_EXPECTED = "ניוד צפוי";
+  const H_TRANSFER_ACTUAL = "ניוד בפועל";
   const H_NOTES = "הערות";
 
   const STATUS_OPTIONS = {
@@ -444,6 +445,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     const transferCompany = getVal(headers, row, H_TRANSFER_COMPANY);
     const transferFundNumber = getVal(headers, row, H_TRANSFER_FUND_NUMBER);
     const transferExpected = getVal(headers, row, H_TRANSFER_EXPECTED);
+    const transferActual = getVal(headers, row, H_TRANSFER_ACTUAL);
     const lastUpdate = getVal(headers, row, H_LAST_UPDATE);
 
     const addField = (label, value) => {
@@ -464,6 +466,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     if (transferCompany) addField(H_TRANSFER_COMPANY, transferCompany);
     if (transferFundNumber) addField(H_TRANSFER_FUND_NUMBER, transferFundNumber);
     if (transferExpected) addField(H_TRANSFER_EXPECTED, transferExpected);
+    if (transferActual) addField(H_TRANSFER_ACTUAL, transferActual);
     if (lastUpdate) addField(H_LAST_UPDATE, lastUpdate);
 
     body.appendChild(fields);
