@@ -37,6 +37,14 @@ H_NOTES = "הערות"
 H_TRANSFER_FUND_NUMBER = "מספר קופה מעבירה"
 
 PRODUCT_GROUP_MARKER = "__group_non_pension__"
+PRODUCT_GROUP_DETAIL_MARKER = "__group_detail_all__"
+PRODUCT_GROUP_DETAIL_ITEMS = {
+    "הצעה לביטוח חיים",
+    "הצעה לביטוח בריאות",
+    "הצעה לביטוח בריאות ומחלות קשות",
+    "הצעה לביטוח חיים למשכנתא",
+    "הצעה לביטוח חיים משועבד",
+}
 PRODUCT_GROUP_ITEMS = {
     "הצטרפות לקופת גמל",
     "הצטרפות לקופת גמל עם ניוד",
@@ -1191,6 +1199,9 @@ def api_search():
             matched = [
                 r for r in rows if r["values"] and r["values"][idx].strip() in PRODUCT_GROUP_ITEMS
             ]
+        elif query == PRODUCT_GROUP_DETAIL_MARKER:
+            # all insurance products together: the 5 known products, plus any other product typed via "אחר"
+            matched = [r for r in rows if r["values"] and len(r["values"]) > idx and r["values"][idx].strip()]
         else:
             matched = [r for r in rows if r["values"] and r["values"][idx].strip() == query]
 
