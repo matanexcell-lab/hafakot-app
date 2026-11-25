@@ -806,15 +806,6 @@ Line: ${e.lineno}:${e.colno}</div>`
     html += single && gapInfo(E, A).flagged && (E || A) ? `<div class="rp-why" id="rp-main-why" style="margin-top:10px"></div>` : "";
     html += `</div>`;
 
-    // מצטבר מתחילת השנה
-    if (single) {
-      const year = month.slice(0, 4);
-      const inYtd = (e) => e.month.startsWith(year + "-") && e.month <= month;
-      const yE = sumFor((reportData.potential || []).filter(inYtd), product);
-      const yA = sumFor((reportData.actual || []).filter(inYtd), product);
-      html += `<div class="rp-card"><div class="rp-title">מתחילת ${year} ועד ${esc(formatMonthKey(month))} (מצטבר)</div>${triple(yE, yA, names)}</div>`;
-    }
-
     // לפי מוצר (כשנבחרו כמה מוצרים יחד)
     const prodItems = [];
     if (isAllScope(product)) {
