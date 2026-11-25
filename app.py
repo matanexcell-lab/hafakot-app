@@ -1368,6 +1368,134 @@ def api_report():
     return jsonify(data)
 
 
+# ---------- Gap explanation (expected vs actual) ----------
+HEB_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"]
+
+
+def month_label(key):
+    try:
+        y, m = key.split("-")
+        return f"{HEB_MONTHS[int(m) - 1]} {y}"
+    except (ValueError, IndexError, AttributeError):
+        return key or "ללא תאריך"
+
+
+def explain_gap(sheet_type, month, product_scope):
+    """Explains, row by row, why the actual total of a month differs from the expected one.
+    Every row falls into exactly one bucket, and the buckets' signed amounts add up to (actual - expected):
+      both      expected and actual in this month, different amounts   -> (a - e)
+      not_done  expected this month, nothing actual (red = rejected)   -> -e
+      moved     expected this month, actual dated in another month     -> -e
+      extra     actual this month without an expected in this month   -> +a"""
+    headers, rows = fetch_sheet(sheet_type)
+    pi = headers.index(H_PRODUCT) if H_PRODUCT in headers else -1
+    if sheet_type == "detail":
+        ai, ei = DETAIL_ACTUAL_COL, DETAIL_EXPECTED_COL
+        for need in (DETAIL_DATE_EXPECTED, DETAIL_DATE_ACTUAL):
+            if need not in headers:
+                raise RuntimeError(f"לא נמצאה עמודה בשם '{need}'")
+        dai, dei = headers.index(DETAIL_DATE_ACTUAL), headers.index(DETAIL_DATE_EXPECTED)
+        unit_pl, unit_one = "הפקות", "הפקה"
+    else:
+        ai = headers.index(H_TRANSFER_ACTUAL) if H_TRANSFER_ACTUAL in headers else -1
+        ei = headers.index(H_TRANSFER_EXPECTED) if H_TRANSFER_EXPECTED in headers else -1
+        if H_DATE not in headers:
+            raise RuntimeError(f"לא נמצאה עמודה בשם '{H_DATE}'")
+        dai = dei = headers.index(H_DATE)
+        unit_pl, unit_one = "ניודים", "ניוד"
+    name_i = headers.index(H_CLIENT_NAME) if H_CLIENT_NAME in headers else -1
+    id_i = ID_COLUMN_INDEX
+    st_i = headers.index(H_STATUS) if H_STATUS in headers else -1
+
+    def val(vals, i):
+        return vals[i] if 0 <= i < len(vals) else ""
+
+    buckets = {k: [] for k in ("both", "not_done_red", "not_done_open", "moved", "extra_none", "extra_other")}
+    exp_total = act_total = 0.0
+    for r in rows:
+        vals = r["values"]
+        prod = val(vals, pi).strip() or "לא צוין"
+        if product_scope == "__group__":
+            if prod not in PRODUCT_GROUP_ITEMS:
+                continue
+        elif product_scope not in ("", "__all__") and prod != product_scope:
+            continue
+        e, a = parse_amount(val(vals, ei)), parse_amount(val(vals, ai))
+        em, am = parse_month_key(val(vals, dei)), parse_month_key(val(vals, dai))
+        in_e = e > 0 and em == month
+        in_a = a > 0 and am == month
+        if in_e:
+            exp_total += e
+        if in_a:
+            act_total += a
+        if not in_e and not in_a:
+            continue
+        item = {
+            "row": r["row_number"], "name": val(vals, name_i).strip(), "id": val(vals, id_i).strip(),
+            "product": prod, "expected": round(e, 2), "actual": round(a, 2),
+            "status": last_status_text(val(vals, st_i)), "other_month": "",
+        }
+        if in_e and in_a:
+            item["delta"] = round(a - e, 2)
+            if abs(a - e) >= 0.5:
+                buckets["both"].append(item)
+        elif in_e and a <= 0:
+            item["delta"] = round(-e, 2)
+            buckets["not_done_red" if r.get("is_red") else "not_done_open"].append(item)
+        elif in_e:
+            item["delta"] = round(-e, 2)
+            item["other_month"] = month_label(am) if am else "ללא תאריך"
+            buckets["moved"].append(item)
+        else:  # in_a only
+            item["delta"] = round(a, 2)
+            if e > 0:
+                item["other_month"] = month_label(em) if em else "ללא תאריך"
+                buckets["extra_other"].append(item)
+            else:
+                buckets["extra_none"].append(item)
+
+    texts = {
+        "both": f"{unit_pl} שבוצעו בסכום שונה מהצפי",
+        "not_done_red": f"{unit_pl} שהיו צפויים החודש ונדחו (מסומנות באדום)",
+        "not_done_open": f"{unit_pl} שהיו צפויים החודש ועדיין לא בוצעו",
+        "moved": f"{unit_pl} שהיו צפויים החודש אך בוצעו בחודש אחר",
+        "extra_none": f"{unit_pl} שבוצעו החודש בלי שהיה להם צפי",
+        "extra_other": f"{unit_pl} שבוצעו החודש אך נצפו בחודש אחר",
+    }
+    out = []
+    for key in ("not_done_open", "not_done_red", "moved", "both", "extra_other", "extra_none"):
+        items = buckets[key]
+        if not items:
+            continue
+        items.sort(key=lambda x: abs(x["delta"]), reverse=True)
+        out.append({
+            "key": key, "text": texts[key], "count": len(items),
+            "amount": round(sum(x["delta"] for x in items), 2),
+            "rows": items[:6], "more": max(0, len(items) - 6),
+        })
+    out.sort(key=lambda b: abs(b["amount"]), reverse=True)
+    gap = act_total - exp_total
+    return {
+        "month": month, "month_label": month_label(month), "expected": round(exp_total, 2), "actual": round(act_total, 2),
+        "gap": round(gap, 2), "gap_pct": round(gap / exp_total * 100, 1) if exp_total else None,
+        "buckets": out, "unit": unit_pl,
+    }
+
+
+@app.route("/api/report/explain", methods=["POST"])
+@login_required
+def api_report_explain():
+    body = request.get_json(silent=True) or {}
+    sheet_type = body.get("sheet_type", "pension")
+    month = (body.get("month") or "").strip()
+    if sheet_type not in SHEET_NAMES or not re.match(r"^\d{4}-\d{2}$", month):
+        return jsonify({"error": "נתונים לא תקינים"}), 400
+    try:
+        return jsonify(explain_gap(sheet_type, month, (body.get("product") or "").strip()))
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/update", methods=["POST"])
 @login_required
 def api_update():
