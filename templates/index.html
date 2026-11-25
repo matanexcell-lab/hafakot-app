@@ -26,6 +26,19 @@
   .dl-write{background:#eaf6ee;border-radius:6px;padding:6px 8px;margin:6px 0;line-height:1.7}
   .dl-rep{font-size:12px;color:#555;margin-top:3px;word-break:break-word}
   .dl-group{margin-top:12px}.dl-group summary{cursor:pointer;font-weight:700;padding:8px 0}
+  .rp-card{border:1.5px solid var(--line,#ddd);border-radius:12px;padding:14px;margin-bottom:12px;background:#fff}
+  .rp-title{font-weight:700;font-size:14px;margin-bottom:10px}
+  .rp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+  .rp-num{font-size:20px;font-weight:800;color:var(--ink,#1c2a4a)}
+  .rp-lbl{font-size:11.5px;color:var(--ink-soft,#666);margin-top:2px}
+  .rp-bad{color:#b3261e}.rp-ok{color:#1c7a3a}
+  .rp-row{display:grid;grid-template-columns:1.3fr 1fr 1fr .9fr;gap:6px;align-items:center;padding:8px 0;border-top:1px dashed var(--line,#ddd);font-size:13px}
+  .rp-row.rp-head{border-top:none;font-size:11.5px;color:var(--ink-soft,#666);font-weight:700}
+  .rp-row.rp-flag{background:#fff3f1;border-radius:8px;padding-inline:6px}
+  .rp-why-btn{grid-column:1/-1;justify-self:start;font-size:12px;padding:5px 12px;border-radius:8px;border:1.5px solid #b3261e;color:#b3261e;background:#fff;cursor:pointer}
+  .rp-why{grid-column:1/-1;background:#fff8e6;border-radius:8px;padding:10px;font-size:13px;line-height:1.7}
+  .rp-why ul{margin:6px 0 0;padding-inline-start:18px}
+  .rp-why li{margin-bottom:6px}.rp-why small{color:#555;display:block}
   .dl-res{padding:5px 0;font-size:13.5px}.dl-res.ok{color:#1c7a3a}.dl-res.bad{color:#b3261e;font-weight:600}
 </style>
 </head>
@@ -120,7 +133,7 @@
     </section>
 
     <section class="panel" id="reports-panel" hidden>
-      <div class="segment-group" id="reports-segment-group">
+      <div class="segment-group" id="reports-segment-group" hidden>
         <button type="button" class="segment active" data-value="actual">ניוד בפועל</button>
         <button type="button" class="segment" data-value="potential">צפי ניוד (פוטנציאל)</button>
       </div>
@@ -131,7 +144,9 @@
       <label class="field-label" style="margin-top: 14px;">חודש</label>
       <select id="report-month-select" class="tz-input"></select>
 
-      <div id="report-result" style="margin-top: 18px; text-align: center; padding: 20px; background: var(--paper); border-radius: 10px; border: 1.5px solid var(--line);">
+      <div id="report-dash" style="margin-top: 16px;"></div>
+
+      <div id="report-result" hidden style="margin-top: 18px; text-align: center; padding: 20px; background: var(--paper); border-radius: 10px; border: 1.5px solid var(--line);">
         <div id="report-result-number" style="font-size: 32px; font-weight: 800; color: var(--ink);">—</div>
         <div id="report-result-label" style="font-size: 13px; color: var(--ink-soft); margin-top: 4px;">בחר מוצר וחודש</div>
       </div>
