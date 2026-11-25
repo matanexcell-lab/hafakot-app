@@ -653,7 +653,7 @@ Line: ${e.lineno}:${e.colno}</div>`
     }
 
     // Months: only months that actually appear in this metric's data.
-    const months = (reportData && reportData[reportKind] ? reportData[reportKind] : []).map((e) => e.month);
+    const months = [...new Set(["potential", "actual"].flatMap((k) => ((reportData && reportData[k]) || []).map((e) => e.month)))].sort().reverse();
     const prevMonth = reportMonthSelect.value;
     const years = [...new Set(months.map((m) => m.split("-")[0]))].sort().reverse();
     const periodOptions = [`<option value="">בחר חודש / שנה…</option>`];
@@ -676,8 +676,8 @@ Line: ${e.lineno}:${e.colno}</div>`
     return formatMonthKey(value);
   }
 
-  function entriesForPeriod(value) {
-    const all = reportData[reportKind] || [];
+  function entriesForPeriod(value, kind) {
+    const all = reportData[kind || reportKind] || [];
     if (value === "all") return all;
     if (value.startsWith("year:")) return all.filter((e) => e.month.startsWith(value.slice(5) + "-"));
     return all.filter((e) => e.month === value);
@@ -697,32 +697,152 @@ Line: ${e.lineno}:${e.colno}</div>`
     return sum;
   }
 
+  // ---------- דוח משולב: צפי + בפועל + פער ----------
+  const GAP_LIMIT = 0.20;
+  const fmtNum = (n) => Math.round(n).toLocaleString("he-IL");
+  const isAllScope = (p) => p === REPORT_ALL_PRODUCTS || p === REPORT_PRODUCT_GROUP_VALUE;
+  const scopeParam = (p) => (p === REPORT_ALL_PRODUCTS ? "__all__" : p === REPORT_PRODUCT_GROUP_VALUE ? "__group__" : p);
+
+  function gapInfo(e, a) {
+    const gap = a - e;
+    const pct = e > 0 ? gap / e : (a > 0 ? Infinity : 0);
+    return { gap, pct, flagged: Math.abs(pct) > GAP_LIMIT };
+  }
+  function gapText(g) {
+    if (!isFinite(g.pct)) return "ללא צפי";
+    const sign = g.gap > 0 ? "+" : "";
+    return `${sign}${(g.pct * 100).toFixed(0)}%`;
+  }
+  const gapCls = (g) => (g.flagged ? "rp-bad" : "rp-ok");
+
+  function triple(e, a, names) {
+    const g = gapInfo(e, a);
+    return `<div class="rp-grid">
+      <div><div class="rp-num">${fmtNum(e)}</div><div class="rp-lbl">${esc(names.potential)}</div></div>
+      <div><div class="rp-num">${fmtNum(a)}</div><div class="rp-lbl">${esc(names.actual)}</div></div>
+      <div><div class="rp-num ${gapCls(g)}">${g.gap > 0 ? "+" : ""}${fmtNum(g.gap)}</div><div class="rp-lbl ${gapCls(g)}">פער · ${gapText(g)}</div></div>
+    </div>`;
+  }
+
+  function renderWhy(d) {
+    const pctTxt = d.gap_pct == null ? "ללא צפי" : `${d.gap_pct > 0 ? "+" : ""}${d.gap_pct}%`;
+    let h = `<b>למה יש פער (${pctTxt})?</b> צפי ${fmtNum(d.expected)}, בפועל ${fmtNum(d.actual)}, פער ${d.gap > 0 ? "+" : ""}${fmtNum(d.gap)}.<ul>`;
+    if (!d.buckets.length) h += "<li>לא נמצאו שורות שמסבירות את הפער.</li>";
+    d.buckets.forEach((b) => {
+      const sign = b.amount > 0 ? "+" : "";
+      h += `<li><b>${b.count} ${esc(b.text)}</b> (${sign}${fmtNum(b.amount)})`;
+      b.rows.forEach((r) => {
+        const who = esc(r.name || r.id || `שורה ${r.row}`);
+        let amounts;
+        if (b.key === "both") amounts = `צפי ${fmtNum(r.expected)} ← בפועל ${fmtNum(r.actual)}`;
+        else if (b.key === "moved") amounts = `צפי ${fmtNum(r.expected)} · בפועל ${fmtNum(r.actual)}`;
+        else if (b.key.startsWith("not_done")) amounts = `צפי ${fmtNum(r.expected)}`;
+        else amounts = `בפועל ${fmtNum(r.actual)}`;
+        const extra = [r.other_month ? `ב${esc(r.other_month)}` : "", r.status ? esc(r.status) : ""].filter(Boolean).join(" · ");
+        h += `<small>${who} · ${esc(r.product)} · ${amounts}${extra ? " · " + extra : ""} · שורה ${r.row}</small>`;
+      });
+      if (b.more) h += `<small>ועוד ${b.more}…</small>`;
+      h += `</li>`;
+    });
+    return h + "</ul>";
+  }
+
+  async function loadWhy(container, month, product) {
+    container.innerHTML = "טוען הסבר…";
+    try {
+      const res = await fetch("/api/report/explain", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet_type: reportSheetType, month, product: scopeParam(product) }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "שגיאה");
+      container.innerHTML = renderWhy(d);
+    } catch (err) { container.textContent = err.message || "לא ניתן לטעון הסבר"; }
+  }
+
+  function rowsTable(items, names, withWhy) {
+    // items: [{label, e, a, month, product}]
+    let h = `<div class="rp-row rp-head"><span></span><span>${esc(names.potential)}</span><span>${esc(names.actual)}</span><span>פער</span></div>`;
+    items.forEach((it, i) => {
+      const g = gapInfo(it.e, it.a);
+      h += `<div class="rp-row${g.flagged && (it.e || it.a) ? " rp-flag" : ""}" data-i="${i}">
+        <span>${esc(it.label)}</span><span>${fmtNum(it.e)}</span><span>${fmtNum(it.a)}</span>
+        <span class="${gapCls(g)}">${gapText(g)}</span>`;
+      if (withWhy && g.flagged && (it.e || it.a) && it.month) h += `<button type="button" class="rp-why-btn" data-i="${i}">למה יש פער?</button>`;
+      h += `</div>`;
+    });
+    return h;
+  }
+
+  function wireWhy(container, items) {
+    container.querySelectorAll(".rp-why-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const row = btn.closest(".rp-row");
+        const it = items[Number(btn.dataset.i)];
+        let box = row.querySelector(".rp-why");
+        if (!box) { box = document.createElement("div"); box.className = "rp-why"; row.appendChild(box); loadWhy(box, it.month, it.product); }
+        else box.hidden = !box.hidden;
+      });
+    });
+  }
+
+  const reportDash = document.getElementById("report-dash");
+
   function updateReportResult() {
     const product = reportProductSelect.value;
     const month = reportMonthSelect.value;
     reportYtdEl.innerHTML = "";
     if (!product || !month) {
-      reportResultNumber.textContent = "—";
-      reportResultLabel.textContent = "בחר מוצר וחודש / שנה";
+      reportDash.innerHTML = `<div class="dl-note" style="text-align:center">בחר מוצר וחודש / שנה</div>`;
       return;
     }
     const names = reportNames();
     const productLabel = product === REPORT_PRODUCT_GROUP_VALUE ? REPORT_PRODUCT_GROUP_LABEL
       : product === REPORT_ALL_PRODUCTS ? "כל המוצרים יחד" : product;
-    const sum = sumFor(entriesForPeriod(month), product);
-    reportResultNumber.textContent = sum.toLocaleString("he-IL");
-    const kindLabel = names[reportKind];
-    reportResultLabel.textContent = `${kindLabel} · ${productLabel} · ${periodLabel(month)}`;
+    const E = sumFor(entriesForPeriod(month, "potential"), product);
+    const A = sumFor(entriesForPeriod(month, "actual"), product);
+    const single = /^\d{4}-\d{2}$/.test(month);
+    let html = `<div class="rp-card"><div class="rp-title">${esc(periodLabel(month))} · ${esc(productLabel)}</div>${triple(E, A, names)}`;
+    html += single && gapInfo(E, A).flagged && (E || A) ? `<div class="rp-why" id="rp-main-why" style="margin-top:10px"></div>` : "";
+    html += `</div>`;
 
-    // For a single month: also show the total from the start of that year up to and including it
-    if (/^\d{4}-\d{2}$/.test(month)) {
+    // מצטבר מתחילת השנה
+    if (single) {
       const year = month.slice(0, 4);
-      const ytdEntries = (reportData[reportKind] || []).filter((e) => e.month.startsWith(year + "-") && e.month <= month);
-      const ytd = sumFor(ytdEntries, product);
-      reportYtdEl.innerHTML =
-        `<div style="font-size:26px;font-weight:800;color:var(--ink);text-align:center;">${ytd.toLocaleString("he-IL")}</div>` +
-        `<div style="font-size:13px;color:var(--ink-soft);text-align:center;margin-top:4px;">${kindLabel} · מתחילת ${year} ועד ${formatMonthKey(month)} (סה"כ מצטבר)</div>`;
+      const inYtd = (e) => e.month.startsWith(year + "-") && e.month <= month;
+      const yE = sumFor((reportData.potential || []).filter(inYtd), product);
+      const yA = sumFor((reportData.actual || []).filter(inYtd), product);
+      html += `<div class="rp-card"><div class="rp-title">מתחילת ${year} ועד ${esc(formatMonthKey(month))} (מצטבר)</div>${triple(yE, yA, names)}</div>`;
     }
+
+    // לפי מוצר (כשנבחרו כמה מוצרים יחד)
+    const prodItems = [];
+    if (isAllScope(product)) {
+      const keys = new Set();
+      ["potential", "actual"].forEach((k) => entriesForPeriod(month, k).forEach((en) => Object.keys(en.products).forEach((p) => keys.add(p))));
+      [...keys].filter((p) => product === REPORT_ALL_PRODUCTS || REPORT_PRODUCT_GROUP_ITEMS.includes(p)).sort().forEach((p) => {
+        prodItems.push({ label: p, e: sumFor(entriesForPeriod(month, "potential"), p), a: sumFor(entriesForPeriod(month, "actual"), p), month: single ? month : "", product: p });
+      });
+      if (prodItems.length) html += `<div class="rp-card" id="rp-prod"><div class="rp-title">לפי מוצר · ${esc(periodLabel(month))}</div>${rowsTable(prodItems, names, single)}</div>`;
+    }
+
+    // לפי חודשים (בשנה / בכל התקופה)
+    const monthSet = new Set();
+    const yearOf = single ? month.slice(0, 4) : (month.startsWith("year:") ? month.slice(5) : "");
+    ["potential", "actual"].forEach((k) => (reportData[k] || []).forEach((en) => { if (!yearOf || en.month.startsWith(yearOf + "-")) monthSet.add(en.month); }));
+    const monthItems = [...monthSet].sort().reverse().map((m) => ({
+      label: formatMonthKey(m), e: sumFor(entriesForPeriod(m, "potential"), product), a: sumFor(entriesForPeriod(m, "actual"), product), month: m, product,
+    }));
+    if (monthItems.length > 1 || (monthItems.length === 1 && !single)) {
+      html += `<div class="rp-card" id="rp-months"><div class="rp-title">לפי חודשים${yearOf ? " · " + yearOf : ""}</div>${rowsTable(monthItems, names, true)}</div>`;
+    }
+    html += `<div class="dl-note">פער מסומן באדום כשהוא עולה על 20% מהצפי. לחיצה על "למה יש פער?" מסבירה לפי השורות בגיליון.</div>`;
+    reportDash.innerHTML = html;
+
+    const mainWhy = document.getElementById("rp-main-why");
+    if (mainWhy) loadWhy(mainWhy, month, product);
+    const prodBox = document.getElementById("rp-prod"); if (prodBox) wireWhy(prodBox, prodItems);
+    const monBox = document.getElementById("rp-months"); if (monBox) wireWhy(monBox, monthItems);
   }
 
   function openCreateModal(headers) {
